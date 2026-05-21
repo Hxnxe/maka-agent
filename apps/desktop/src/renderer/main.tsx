@@ -27,8 +27,11 @@ import { SettingsModal } from './settings/SettingsModal';
 import { ErrorBoundary } from './error-boundary';
 import { KeyboardHelpModal, useKeyboardHelp } from './keyboard-help';
 import { CommandPalette, buildCommandList, useCommandPalette } from './command-palette';
+import { OnboardingHero } from './OnboardingHero';
 import { applyDensity, applyTheme } from './theme';
 import './styles.css';
+
+const NO_REAL_CONNECTION_CODE = 'NO_REAL_CONNECTION';
 
 function App() {
   return (
@@ -82,6 +85,15 @@ function AppShell() {
   } : undefined);
   const visibleSessions = useMemo(() => filterSessions(sessions, navSelection), [sessions, navSelection]);
   const sessionCounts = useMemo(() => countSessions(sessions), [sessions]);
+  // Aligns with @kenji's provider-onboarding-invariants 3-state taxonomy:
+  // `ready` when at least one enabled connection exists, `needs_onboarding`
+  // otherwise. We treat any-enabled as "ready" — backend (xuan) is the
+  // authoritative check on secret + model validity; this gate just decides
+  // which hero to show on an empty chat.
+  const needsOnboarding = useMemo(
+    () => !connections.some((connection) => connection.enabled),
+    [connections],
+  );
   const [sessionListWidth, setSessionListWidth] = useState(() => readSessionListWidth());
 
   useEffect(() => {
@@ -227,19 +239,29 @@ function AppShell() {
     setPermissionBySession({});
   }
 
-  async function send(text: string) {
-    if (!activeId) {
-      const session = await window.maka.sessions.create({
-        permissionMode: 'ask',
-        name: text.slice(0, 42) || 'New Chat',
-      });
-      setActiveId(session.id);
-      await refreshSessions();
-      await window.maka.sessions.send(session.id, { type: 'send', turnId: crypto.randomUUID(), text });
-      return;
+  async function send(text: string): Promise<boolean> {
+    try {
+      if (!activeId) {
+        const session = await window.maka.sessions.create({
+          permissionMode: 'ask',
+          name: text.slice(0, 42) || 'New Chat',
+        });
+        setActiveId(session.id);
+        await refreshSessions();
+        await window.maka.sessions.send(session.id, { type: 'send', turnId: crypto.randomUUID(), text });
+        return true;
+      }
+      await window.maka.sessions.send(activeId, { type: 'send', turnId: crypto.randomUUID(), text });
+      await refreshMessages(activeId);
+      return true;
+    } catch (error) {
+      if (isNoRealConnectionError(error)) {
+        showModelSetupToast(cleanErrorMessage(error));
+      } else {
+        toastApi.error('发送失败', cleanErrorMessage(error));
+      }
+      return false;
     }
-    await window.maka.sessions.send(activeId, { type: 'send', turnId: crypto.randomUUID(), text });
-    await refreshMessages(activeId);
   }
 
   async function stop() {
@@ -307,6 +329,14 @@ function AppShell() {
         void refreshMessages(sessionId);
         break;
       case 'error':
+        if (isNoRealConnectionEvent(event)) {
+          showModelSetupToast(cleanEventMessage(event.message));
+        } else {
+          toastApi.error('对话出错', event.message);
+        }
+        void refreshSessions();
+        void refreshMessages(sessionId);
+        break;
       case 'abort':
       case 'complete':
         void refreshSessions();
@@ -331,6 +361,20 @@ function AppShell() {
 
   function closeSettings() {
     setSettingsOpen(false);
+  }
+
+  function showModelSetupToast(description: string) {
+    toastApi.toast({
+      title: '未配置真实模型',
+      description,
+      variant: 'error',
+      duration: 8000,
+      action: {
+        label: '打开设置 · 模型',
+        onClick: openSettings,
+      },
+    });
+    openSettings();
   }
 
   function upsertTool(sessionId: string, toolUseId: string, patch: Partial<ToolActivityItem> & { toolUseId: string }) {
@@ -453,6 +497,12 @@ function AppShell() {
               activeConnectionLabel={activeConnectionLabel}
               activeModelLabel={activeModelLabel}
               mode={navSelection.section}
+              emptyOverride={needsOnboarding ? (
+                <OnboardingHero
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onUseAnyway={() => composerRef.current?.focus()}
+                />
+              ) : undefined}
               onNew={createSession}
               onPromptSuggestion={(prompt) => composerRef.current?.setText(prompt)}
               onPermissionModeChange={(mode) => void setPermissionMode(mode)}
@@ -519,6 +569,26 @@ function readSessionListWidth(): number {
   const stored = Number(localStorage.getItem('maka-chat-list-width-v1'));
   if (Number.isFinite(stored) && stored > 0) return clamp(stored, 240, 420);
   return 320;
+}
+
+function isNoRealConnectionError(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.includes(NO_REAL_CONNECTION_CODE);
+}
+
+function isNoRealConnectionEvent(event: Extract<SessionEvent, { type: 'error' }>): boolean {
+  return event.code === NO_REAL_CONNECTION_CODE || event.message.includes(NO_REAL_CONNECTION_CODE);
+}
+
+function cleanErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return cleanEventMessage(raw);
+}
+
+function cleanEventMessage(message: string): string {
+  return message
+    .replace(/^Error invoking remote method '[^']+': Error: /, '')
+    .replace(`${NO_REAL_CONNECTION_CODE}: `, '');
 }
 
 function clamp(value: number, min: number, max: number): number {

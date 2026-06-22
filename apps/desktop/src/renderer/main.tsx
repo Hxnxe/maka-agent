@@ -155,25 +155,9 @@ function openPathActionErrorMessage(error: unknown, key: 'workspace' | 'project'
   return generalizedErrorMessageChinese(error, `无法打开${openPathActionLabel(key)}，请稍后重试。`);
 }
 
-function appInfoActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '项目路径暂时无法读取，请稍后重试。');
-}
-
 function selectProjectDirectoryFailureCopy(reason: 'missing-selection'): string {
   if (reason === 'missing-selection') return '没有读取到选中的目录，请重新选择。';
   return '工作目录暂时无法切换，请稍后重试。';
-}
-
-function shellSettingsActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '外观设置暂时无法载入，请稍后重试。');
-}
-
-function connectionsActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '模型连接暂时无法刷新，请稍后重试。');
-}
-
-function memoryActiveActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '本地记忆状态暂时无法刷新，请稍后重试。');
 }
 
 function commandPaletteConnectionTestFailureMessage(result: ConnectionTestResult): string {
@@ -612,7 +596,7 @@ function AppShell() {
     try {
       await action();
     } catch (error) {
-      toastApi.error(errorTitle, sessionRowActionErrorMessage(error));
+      toastApi.error(errorTitle, generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。'));
     } finally {
       pendingSessionRowActionsRef.current.delete(key);
     }
@@ -825,7 +809,7 @@ function AppShell() {
         await refreshSessions();
       }
     } catch (error) {
-      if (activeIdRef.current === sessionId) toastApi.error('操作失败', turnFooterActionErrorMessage(error));
+      if (activeIdRef.current === sessionId) toastApi.error('操作失败', generalizedErrorMessageChinese(error, '对话操作失败，请稍后重试。'));
     } finally {
       clearPendingTurnAction(key);
     }
@@ -1196,7 +1180,7 @@ function AppShell() {
       setSessions(next);
       return next;
     } catch (error) {
-      toastApi.error('刷新会话列表失败', sessionListActionErrorMessage(error));
+      toastApi.error('刷新会话列表失败', generalizedErrorMessageChinese(error, '刷新会话列表失败，请稍后重试。'));
       return sessionsRef.current;
     }
   }
@@ -1222,7 +1206,7 @@ function AppShell() {
       applyDensity(den);
       applyThemePalette(palette);
     } catch (error) {
-      toastApi.error('载入外观设置失败', shellSettingsActionErrorMessage(error));
+      toastApi.error('载入外观设置失败', generalizedErrorMessageChinese(error, '外观设置暂时无法载入，请稍后重试。'));
     }
   }
 
@@ -1545,7 +1529,7 @@ function AppShell() {
       }
       await refreshSessions();
     } catch (error) {
-      if (activeIdRef.current === sessionId) toastApi.error('切换模型失败', sessionModelActionErrorMessage(error));
+      if (activeIdRef.current === sessionId) toastApi.error('切换模型失败', generalizedErrorMessageChinese(error, '模型暂时无法切换，请稍后重试。'));
     } finally {
       pendingSessionModelChangesRef.current.delete(sessionId);
       setPendingSessionModelBySession((current) => {
@@ -1589,7 +1573,7 @@ function AppShell() {
       setConnections(next);
       setDefaultConnection(nextDefault);
     } catch (error) {
-      toastApi.error('刷新模型连接失败', connectionsActionErrorMessage(error));
+      toastApi.error('刷新模型连接失败', generalizedErrorMessageChinese(error, '模型连接暂时无法刷新，请稍后重试。'));
     }
   }
 
@@ -1598,7 +1582,7 @@ function AppShell() {
       const next = await window.maka.app.info();
       setAppInfo({ projectPath: next.projectPath, projectGit: next.projectGit });
     } catch (error) {
-      toastApi.error('读取项目路径失败', appInfoActionErrorMessage(error));
+      toastApi.error('读取项目路径失败', generalizedErrorMessageChinese(error, '项目路径暂时无法读取，请稍后重试。'));
     }
   }
 
@@ -1614,7 +1598,7 @@ function AppShell() {
       setAppInfo({ projectPath: result.projectPath, projectGit: result.projectGit });
       toastApi.success('已切换工作目录', basenameFromPath(result.projectPath));
     } catch (error) {
-      toastApi.error('选择工作目录失败', appInfoActionErrorMessage(error));
+      toastApi.error('选择工作目录失败', generalizedErrorMessageChinese(error, '项目路径暂时无法读取，请稍后重试。'));
     }
   }
 
@@ -1775,7 +1759,7 @@ function AppShell() {
       const next = await window.maka.memory.getState();
       setMemoryActive(next.agentReadEnabled && next.status === 'ok' && next.content.trim().length > 0);
     } catch (error) {
-      toastApi.error(failureTitle, memoryActiveActionErrorMessage(error));
+      toastApi.error(failureTitle, generalizedErrorMessageChinese(error, '本地记忆状态暂时无法刷新，请稍后重试。'));
     }
   }
 
@@ -1905,7 +1889,7 @@ function AppShell() {
         const reason = noRealConnectionReasonFromError(error);
         showModelSetupToast(noRealConnectionSetupDescription(reason), reason);
       } else {
-        toastApi.error('发送失败', sendActionErrorMessage(error));
+        toastApi.error('发送失败', generalizedErrorMessageChinese(error, '消息暂时无法发送，请稍后重试。'));
       }
       return false;
     }
@@ -1978,7 +1962,7 @@ function AppShell() {
       if (shouldShowFeedback()) toastApi.success('已导入文件内容', `${result.name}${result.truncated ? ' · 已截断' : ''}`);
       return result.prompt;
     } catch (error) {
-      if (shouldShowFeedback()) toastApi.error('导入文件失败', composerImportActionErrorMessage(error));
+      if (shouldShowFeedback()) toastApi.error('导入文件失败', generalizedErrorMessageChinese(error, '导入文件内容失败，请稍后重试。'));
       return undefined;
     }
   }
@@ -2022,7 +2006,7 @@ function AppShell() {
       // UnhandledPromiseRejection and the user would see nothing.
       // Surface it as a toast so the user knows the model wasn't
       // actually interrupted and can retry.
-      if (activeIdRef.current === sessionId) toastApi.error('停止失败', sessionControlActionErrorMessage(error));
+      if (activeIdRef.current === sessionId) toastApi.error('停止失败', generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。'));
     } finally {
       clearPendingSessionAction(sessionId, stopPendingRef, setStopPendingBySession);
     }
@@ -2037,7 +2021,7 @@ function AppShell() {
       // Same fire-and-forget call site as stop() — wrap so a failed
       // permission response (main process busy / session dropped)
       // surfaces instead of dying as UnhandledPromiseRejection.
-      if (activeIdRef.current === sessionId) toastApi.error('响应失败', sessionControlActionErrorMessage(error));
+      if (activeIdRef.current === sessionId) toastApi.error('响应失败', generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。'));
     }
   }
 
@@ -2439,7 +2423,7 @@ function AppShell() {
         return false;
       }
     } catch (error) {
-      toastApi.error('开始对话失败', quickChatActionErrorMessage(error));
+      toastApi.error('开始对话失败', generalizedErrorMessageChinese(error, '对话暂时无法开始，请稍后重试。'));
       return false;
     } finally {
       quickChatPendingRef.current = false;
@@ -3576,38 +3560,6 @@ function noRealConnectionSetupDescription(reason: string | undefined): string {
 
 function sessionEventErrorMessage(event: Extract<SessionEvent, { type: 'error' }>): string {
   return generalizedErrorMessageChinese(new Error(event.message), '对话运行失败，请稍后重试。');
-}
-
-function turnFooterActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '对话操作失败，请稍后重试。');
-}
-
-function sessionRowActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。');
-}
-
-function sessionListActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '刷新会话列表失败，请稍后重试。');
-}
-
-function sessionModelActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '模型暂时无法切换，请稍后重试。');
-}
-
-function sessionControlActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '会话操作失败，请稍后重试。');
-}
-
-function sendActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '消息暂时无法发送，请稍后重试。');
-}
-
-function composerImportActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '导入文件内容失败，请稍后重试。');
-}
-
-function quickChatActionErrorMessage(error: unknown): string {
-  return generalizedErrorMessageChinese(error, '对话暂时无法开始，请稍后重试。');
 }
 
 function cleanErrorMessage(error: unknown): string {

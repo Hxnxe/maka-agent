@@ -6203,7 +6203,7 @@ const COMPOSER_COPY_BY_LOCALE: Record<UiLocale, {
   streamingHintInterrupt: string;
 }> = {
   zh: {
-    placeholder: '描述任务，/ 快捷调用，@ 添加上下文，标准模式经济高效',
+    placeholder: '描述任务  /  快捷调用  @  添加上下文',
     textareaAriaLabel: '消息输入框',
     awaitingPermission: '等待你确认权限…',
     sending: '正在发送…',

@@ -9,6 +9,7 @@
 // reads the attribute to swap a coherent set of `--ui-density-*` tokens.
 
 import type { ThemePalette, ThemePreference, UiDensity } from '@maka/core';
+import { safeLocalStorageSet } from './browser-storage';
 
 const DARK_CLASS = 'dark';
 
@@ -29,11 +30,7 @@ export function applyTheme(pref: ThemePreference): () => void {
 
   // Cache the user-facing preference (not the resolved light/dark). The
   // pre-React paint reapplies the auto → system-matchMedia branch itself.
-  try {
-    localStorage.setItem('maka-theme-v1', pref);
-  } catch {
-    /* localStorage unavailable; cached preference will fall back to default */
-  }
+  safeLocalStorageSet('maka-theme-v1', pref);
 
   if (pref === 'auto') {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -90,11 +87,7 @@ export function applyThemePalette(palette: ThemePalette): void {
   } else {
     root.setAttribute('data-maka-theme', palette);
   }
-  try {
-    localStorage.setItem('maka-theme-palette-v1', palette);
-  } catch {
-    /* localStorage unavailable; pre-React paint will fall back to default */
-  }
+  safeLocalStorageSet('maka-theme-palette-v1', palette);
 }
 
 /**

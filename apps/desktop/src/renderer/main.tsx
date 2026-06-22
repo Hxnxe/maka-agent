@@ -103,6 +103,7 @@ import {
   recordSessionEventStreamChange,
   recordSessionEventStreamEvent,
 } from './session-event-health';
+import { safeLocalStorageGet, safeLocalStorageSet } from './browser-storage';
 import './styles.css';
 
 const NO_REAL_CONNECTION_CODE = 'NO_REAL_CONNECTION';
@@ -1184,19 +1185,11 @@ function AppShell() {
   }, [activeId, activeSession?.status, activeStreaming.length, hasInFlightLiveTools, activePermission?.requestId]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('maka-chat-list-width-v1', String(sessionListWidth));
-    } catch {
-      /* localStorage unavailable; width resets to the default next launch */
-    }
+    safeLocalStorageSet('maka-chat-list-width-v1', String(sessionListWidth));
   }, [sessionListWidth]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('maka-chat-list-collapsed-v1', sessionListCollapsed ? 'true' : 'false');
-    } catch {
-      /* localStorage unavailable; sidebar resets to the collapsed target-layout like rail */
-    }
+    safeLocalStorageSet('maka-chat-list-collapsed-v1', sessionListCollapsed ? 'true' : 'false');
   }, [sessionListCollapsed]);
 
   // Persist sidebar nav selection so the app remembers what bucket the user
@@ -1204,11 +1197,7 @@ function AppShell() {
   // localStorage availability check — Vite dev sometimes runs through a
   // worker where it isn't defined.
   useEffect(() => {
-    try {
-      localStorage.setItem('maka-nav-selection-v1', JSON.stringify(navSelection));
-    } catch {
-      /* localStorage unavailable */
-    }
+    safeLocalStorageSet('maka-nav-selection-v1', JSON.stringify(navSelection));
   }, [navSelection]);
 
   async function refreshSessions(): Promise<SessionSummary[]> {
@@ -2412,11 +2401,7 @@ function AppShell() {
    * tabs without close/reopen.
    */
   function openSettingsSection(section: SettingsSection) {
-    try {
-      localStorage.setItem('maka-settings-section-v1', section);
-    } catch {
-      /* localStorage unavailable; fall back to whatever section the modal picks */
-    }
+    safeLocalStorageSet('maka-settings-section-v1', section);
     setSettingsRequestedSection(section);
     setSettingsOpen(true);
   }
@@ -3537,7 +3522,7 @@ function renderConversationMarkdown(sessionName: string, messages: StoredMessage
 
 function readNavSelection(): NavSelection {
   try {
-    const raw = localStorage.getItem('maka-nav-selection-v1');
+    const raw = safeLocalStorageGet('maka-nav-selection-v1');
     if (!raw) return { section: 'sessions', filter: 'chats' };
     const parsed = JSON.parse(raw) as { section?: string; filter?: string };
     // PR-SIDEBAR-IA-0 Phase 2 fixup (xuan `94c7bf0f`): fail-closed.
@@ -3563,23 +3548,15 @@ function readNavSelection(): NavSelection {
 }
 
 function readSessionListWidth(): number {
-  try {
-    const stored = Number(localStorage.getItem('maka-chat-list-width-v1'));
-    if (Number.isFinite(stored) && stored > 0) return clampSessionListWidth(stored);
-  } catch {
-    /* localStorage unavailable */
-  }
+  const stored = Number(safeLocalStorageGet('maka-chat-list-width-v1'));
+  if (Number.isFinite(stored) && stored > 0) return clampSessionListWidth(stored);
   return SESSION_LIST_EXPANDED_DEFAULT_WIDTH;
 }
 
 function readSessionListCollapsed(): boolean {
-  try {
-    const stored = localStorage.getItem('maka-chat-list-collapsed-v1');
-    if (stored === 'false') return false;
-    if (stored === 'true') return true;
-  } catch {
-    /* localStorage unavailable */
-  }
+  const stored = safeLocalStorageGet('maka-chat-list-collapsed-v1');
+  if (stored === 'false') return false;
+  if (stored === 'true') return true;
   return true;
 }
 
@@ -3738,19 +3715,15 @@ function countSessions(sessions: SessionSummary[]) {
 // "FOUC prevention via inline-script" pattern, but here it runs in the same
 // JS bundle as the rest of the renderer so we don't need to relax the CSP
 // `script-src 'self'` rule.
-try {
-  const cached = localStorage.getItem('maka-theme-v1');
-  const isDark =
-    cached === 'dark' ||
-    (cached !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  if (isDark) {
-    document.documentElement.classList.add('dark');
-    document.documentElement.style.colorScheme = 'dark';
-  } else {
-    document.documentElement.style.colorScheme = 'light';
-  }
-} catch {
-  /* localStorage unavailable; fall back to default light theme */
+const cachedThemePreference = safeLocalStorageGet('maka-theme-v1');
+const shouldApplyDarkTheme =
+  cachedThemePreference === 'dark' ||
+  (cachedThemePreference !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+if (shouldApplyDarkTheme) {
+  document.documentElement.classList.add('dark');
+  document.documentElement.style.colorScheme = 'dark';
+} else {
+  document.documentElement.style.colorScheme = 'light';
 }
 
 createRoot(document.getElementById('root')!).render(

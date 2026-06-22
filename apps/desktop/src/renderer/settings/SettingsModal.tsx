@@ -108,6 +108,7 @@ import { ProvidersPanel } from './ProvidersPanel';
 import { PasswordInput } from './password-input';
 import { openPathFailureCopy, openPathActionLabel } from '../open-path';
 import { applyUiLocale, type UiLocalePreference } from '../theme';
+import { safeLocalStorageGet, safeLocalStorageSet } from '../browser-storage';
 import {
   deriveAccountAuthActions,
   presentAccountAuthState,
@@ -883,11 +884,7 @@ function SettingsSurface(props: {
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('maka-settings-section-v1', section);
-    } catch {
-      /* localStorage unavailable */
-    }
+    safeLocalStorageSet('maka-settings-section-v1', section);
   }, [section]);
   const [settings, setSettings] = useState<AppSettings>(() => createDefaultSettings());
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
@@ -7008,14 +7005,10 @@ function SettingRow(props: { title: string; detail: string; value: string }) {
 }
 
 function readLastSettingsSection(): SettingsSection {
-  try {
-    const value = localStorage.getItem('maka-settings-section-v1');
-    if (!value) return 'models';
-    if (SETTINGS_NAV.some((item) => item.id === value)) {
-      return value as SettingsSection;
-    }
-  } catch {
-    /* fall through */
+  const value = safeLocalStorageGet('maka-settings-section-v1');
+  if (!value) return 'models';
+  if (SETTINGS_NAV.some((item) => item.id === value)) {
+    return value as SettingsSection;
   }
   return 'models';
 }

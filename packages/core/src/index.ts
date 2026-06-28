@@ -649,7 +649,10 @@ export type {
   ModelCatalogAvailability,
   ModelCatalogEntry,
   ModelCatalogPricing,
+  ModelCatalogProvenanceSources,
+  ModelCatalogUserChoiceSource,
   ModelUnavailableReason,
+  SavedModelChoice,
 } from './model-catalog.js';
 export {
   buildConnectionModelCatalogEntries,

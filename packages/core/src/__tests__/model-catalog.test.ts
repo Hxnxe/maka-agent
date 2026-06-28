@@ -5,6 +5,7 @@ import {
   buildModelCatalogEntries,
   validateChatDefaultModel,
 } from '../model-catalog.js';
+import { isConnectionReady } from '../connection-readiness.js';
 import type { LlmConnection, ModelInfo, ProviderType } from '../llm-connections.js';
 
 describe('ModelCatalogEntry', () => {
@@ -64,6 +65,38 @@ describe('ModelCatalogEntry', () => {
     assert.equal(entries[0]?.canUseAsChatDefault, true);
   });
 
+  it('tracks provider inventory, static metadata, and connection default as separate source facts', () => {
+    const [entry] = buildModelCatalogEntries({
+      providerType: 'openai',
+      defaultModel: 'gpt-5.5',
+      models: [{ id: 'gpt-5.5' }],
+      modelSource: 'fetched',
+      modelsFetchedAt: 1_800_000_000_000,
+    });
+
+    assert.deepEqual(entry?.provenance.sources, {
+      providerInventory: true,
+      staticCatalog: true,
+      userChoice: ['connection_default'],
+    });
+    assert.equal(entry?.source, 'provider_api');
+    assert.equal(entry?.displayName, 'GPT-5.5');
+  });
+
+  it('marks a fetched model as default when the saved default id has surrounding whitespace', () => {
+    const entries = buildModelCatalogEntries({
+      providerType: 'openai',
+      defaultModel: ' gpt-4.1 ',
+      models: [{ id: 'gpt-4.1' }],
+      modelSource: 'fetched',
+    });
+
+    assert.deepEqual(
+      entries.map((entry) => [entry.id, entry.isDefault, entry.provenance.sources?.userChoice]),
+      [['gpt-4.1', true, ['connection_default']]],
+    );
+  });
+
   it('adds a blocked default entry when a live provider list no longer contains the selected model', () => {
     const entries = buildModelCatalogEntries({
       providerType: 'zai-coding-plan',
@@ -94,6 +127,80 @@ describe('ModelCatalogEntry', () => {
       validation.ok ? validation : { ok: validation.ok, reason: validation.reason },
       { ok: false, reason: 'not_in_live_list' },
     );
+  });
+
+  it('keeps auth and provider state ahead of live-list missing entries', () => {
+    const withAuthFailure = buildModelCatalogEntries({
+      providerType: 'zai-coding-plan',
+      defaultModel: 'glm-removed',
+      models: [{ id: 'glm-4.7' }],
+      modelSource: 'fetched',
+      authOk: false,
+    });
+
+    const withProviderFailure = buildModelCatalogEntries({
+      providerType: 'zai-coding-plan',
+      defaultModel: 'glm-removed',
+      models: [{ id: 'glm-4.7' }],
+      modelSource: 'fetched',
+      providerAvailable: false,
+    });
+
+    assert.equal(withAuthFailure[0]?.unavailableReason, 'auth');
+    assert.equal(withProviderFailure[0]?.unavailableReason, 'provider_removed');
+  });
+
+  it('keeps fallback missing saved choices visible without making them directly sendable', () => {
+    const entries = buildModelCatalogEntries({
+      providerType: 'openai-compatible',
+      defaultModel: 'custom-default',
+      models: [{ id: 'relay-static-model' }],
+      modelSource: 'fallback',
+      savedModelIds: [{ id: 'custom-session', source: 'session_model' }],
+    });
+
+    assert.deepEqual(
+      entries.map((entry) => [entry.id, entry.unavailableReason, entry.availability, entry.canUseAsChatDefault]),
+      [
+        ['custom-default', 'not_in_live_list', 'blocked', false],
+        ['relay-static-model', 'none', 'available', true],
+        ['custom-session', 'not_in_live_list', 'blocked', false],
+      ],
+    );
+  });
+
+  it('does not allow fallback missing defaults that the local send gate will reject', () => {
+    const input = {
+      providerType: 'openai-compatible' as const,
+      defaultModel: 'custom-default',
+      models: [{ id: 'relay-static-model' }],
+      modelSource: 'fallback' as const,
+    };
+
+    const [missingDefault] = buildModelCatalogEntries(input);
+    const validation = validateChatDefaultModel(input);
+    const readiness = isConnectionReady({
+      connection: {
+        slug: 'relay',
+        name: 'Relay',
+        providerType: 'openai-compatible',
+        defaultModel: 'custom-default',
+        enabled: true,
+        models: [{ id: 'relay-static-model' }],
+        modelSource: 'fallback',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      hasSecret: true,
+    });
+
+    assert.equal(missingDefault?.id, 'custom-default');
+    assert.equal(missingDefault?.canUseAsChatDefault, false);
+    assert.deepEqual(
+      validation.ok ? validation : { ok: validation.ok, reason: validation.reason },
+      { ok: false, reason: 'not_in_live_list' },
+    );
+    assert.deepEqual(readiness, { ready: false, reason: 'model_not_enabled' });
   });
 
   it('blocks explicitly image-only models from becoming a chat default', () => {
@@ -166,7 +273,12 @@ describe('ModelCatalogEntry', () => {
 
     const entries = buildConnectionModelCatalogEntries({
       connection,
-      savedModelIds: ['glm-session', 'glm-daily-review', 'glm-4.7', ' '],
+      savedModelIds: [
+        { id: 'glm-session', source: 'session_model' },
+        { id: 'glm-daily-review', source: 'daily_review_model' },
+        'glm-4.7',
+        ' ',
+      ],
       now: 1_800_000_001_000,
     });
 
@@ -182,6 +294,9 @@ describe('ModelCatalogEntry', () => {
     assert.equal(entries[1]?.source, 'provider_api');
     assert.equal(entries[2]?.source, 'unknown');
     assert.equal(entries[2]?.provenance.userChoice, true);
+    assert.deepEqual(entries[0]?.provenance.sources?.userChoice, ['connection_default']);
+    assert.deepEqual(entries[2]?.provenance.sources?.userChoice, ['session_model']);
+    assert.deepEqual(entries[3]?.provenance.sources?.userChoice, ['daily_review_model']);
   });
 
   it('falls back to provider defaults for a connection without fetched models', () => {

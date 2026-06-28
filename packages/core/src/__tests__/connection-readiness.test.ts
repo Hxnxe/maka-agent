@@ -70,4 +70,38 @@ describe('isConnectionReady — model capability gate', () => {
 
     assert.deepEqual(verdict, { ready: true, model: 'custom-chat' });
   });
+
+  it('treats an enumerated fallback model list as the local send gate', () => {
+    const verdict = isConnectionReady({
+      connection: connection({
+        defaultModel: 'custom-chat',
+        models: [{ id: 'relay-static-model' }],
+        modelSource: 'fallback',
+      }),
+      hasSecret: true,
+    });
+
+    assert.deepEqual(verdict, { ready: false, reason: 'model_not_enabled' });
+  });
+
+  it('returns the normalized model id after validating a whitespace-padded model', () => {
+    assert.deepEqual(
+      isConnectionReady({
+        connection: connection({
+          defaultModel: ' gpt-4.1 ',
+        }),
+        hasSecret: true,
+      }),
+      { ready: true, model: 'gpt-4.1' },
+    );
+
+    assert.deepEqual(
+      isConnectionReady({
+        connection: connection(),
+        hasSecret: true,
+        requestedModel: ' gpt-4.1 ',
+      }),
+      { ready: true, model: 'gpt-4.1' },
+    );
+  });
 });

@@ -111,12 +111,16 @@ export function isConnectionReady(input: IsConnectionReadyInput): IsConnectionRe
   if (authKind !== 'none' && !hasSecret) {
     return { ready: false, reason: 'missing_api_key' };
   }
-  const model = requestedModel || connection.defaultModel;
+  const model = (requestedModel || connection.defaultModel)?.trim();
   if (!model) {
     return { ready: false, reason: 'missing_model' };
   }
   if (connection.models) {
-    const enabled = new Map(connection.models.map((entry) => [entry.id, entry]));
+    const enabled = new Map<string, (typeof connection.models)[number]>();
+    for (const entry of connection.models) {
+      const id = entry.id.trim();
+      if (id) enabled.set(id, entry);
+    }
     if (enabled.size === 0) {
       return { ready: false, reason: 'empty_model_list' };
     }

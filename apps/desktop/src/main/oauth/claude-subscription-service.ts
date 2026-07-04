@@ -43,6 +43,14 @@ import {
   type SubscriptionActionFailureReason,
   type SubscriptionActionResult,
 } from '@maka/core';
+import {
+  serializeOAuthSubscriptionTokens,
+} from '@maka/runtime';
+import type { CredentialStore } from '@maka/storage';
+import {
+  tryDeleteSharedOAuthToken,
+  trySaveSharedOAuthToken,
+} from './shared-credential-bridge.js';
 
 // =============================================================
 // Endpoints + client id — mirror Claude Code's current OAuth
@@ -154,6 +162,8 @@ export interface ClaudeSubscriptionServiceDeps {
   now?: () => number;
   /** fetch implementation. Defaults to global fetch (Node 18+). */
   fetchFn?: typeof fetch;
+  /** Shared workspace credential store used as a one-way export for pure-Node callers such as the CLI. */
+  credentialStore?: Pick<CredentialStore, 'setSecret' | 'deleteSecret'>;
 }
 
 export class ClaudeSubscriptionService {
@@ -161,6 +171,7 @@ export class ClaudeSubscriptionService {
   private readonly deviceIdFilePath: string;
   private readonly now: () => number;
   private readonly fetchFn: typeof fetch;
+  private readonly credentialStore?: Pick<CredentialStore, 'setSecret' | 'deleteSecret'>;
 
   private cachedTokens: PersistedTokens | null = null;
   private cachedQuota: QuotaSnapshot | null = null;
@@ -180,6 +191,7 @@ export class ClaudeSubscriptionService {
     this.deviceIdFilePath = join(deps.userDataDir, '.claude_subscription_device_id');
     this.now = deps.now ?? (() => Date.now());
     this.fetchFn = deps.fetchFn ?? (globalThis.fetch as typeof fetch);
+    this.credentialStore = deps.credentialStore;
   }
 
   // -----------------------------------------------------------
@@ -468,15 +480,22 @@ export class ClaudeSubscriptionService {
     this.lastStorageFailedMessage = null;
     this.pending.clear();
     this.authorizing = false;
+    let localDeleteFailed = false;
     try {
       await fs.unlink(this.tokenFilePath);
     } catch (err) {
       // ENOENT is fine; anything else is suspicious but not fatal.
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
-        return { ok: false, reason: 'storage_failed', message: '删除本地凭据失败，请手动清理。' };
+        localDeleteFailed = true;
       }
     }
+    const sharedDeleted = await tryDeleteSharedOAuthToken({
+      credentialStore: this.credentialStore,
+      slug: 'claude-subscription',
+    });
+    if (localDeleteFailed) return { ok: false, reason: 'storage_failed', message: '删除本地凭据失败，请手动清理。' };
+    if (!sharedDeleted) return { ok: false, reason: 'storage_failed', message: '删除共享凭据失败，请手动清理。' };
     return { ok: true };
   }
 
@@ -644,6 +663,7 @@ export class ClaudeSubscriptionService {
     // Re-apply mode explicitly in case the existing file had a
     // different mode (writeFile only sets it on create).
     await fs.chmod(this.tokenFilePath, 0o600);
+    await this.trySaveSharedTokens(tokens);
     this.lastStorageFailedMessage = null;
   }
 
@@ -668,6 +688,7 @@ export class ClaudeSubscriptionService {
       const parsed = JSON.parse(decoded) as PersistedTokens;
       this.cachedTokens = parsed;
       this.lastStorageFailedMessage = null;
+      await this.trySaveSharedTokens(parsed);
       return parsed;
     } catch {
       // Token file exists but is unreadable (keychain rolled, file
@@ -677,6 +698,14 @@ export class ClaudeSubscriptionService {
       try { await fs.unlink(this.tokenFilePath); } catch { /* best-effort */ }
       return null;
     }
+  }
+
+  private async trySaveSharedTokens(tokens: PersistedTokens): Promise<void> {
+    await trySaveSharedOAuthToken({
+      credentialStore: this.credentialStore,
+      slug: 'claude-subscription',
+      value: serializeOAuthSubscriptionTokens(tokens),
+    });
   }
 
   private async refreshProfile(): Promise<void> {
@@ -762,8 +791,8 @@ export class ClaudeSubscriptionService {
 
 /**
  * Resolve whether the cloak path is enabled. Used by the future
- * subscription send-path to decide whether to dynamic-import the
- * cloaked-request module. Centralized here so the contract test
+ * subscription send-path to decide whether to delegate to the runtime
+ * cloaked request builder. Centralized here so the contract test
  * has a single anchor.
  */
 export function isCloakEnabled(): boolean {

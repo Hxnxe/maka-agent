@@ -37,6 +37,14 @@ import {
   type SubscriptionActionResult,
 } from '@maka/core';
 import {
+  serializeOAuthSubscriptionTokens,
+} from '@maka/runtime';
+import type { CredentialStore } from '@maka/storage';
+import {
+  tryDeleteSharedOAuthToken,
+  trySaveSharedOAuthToken,
+} from './shared-credential-bridge.js';
+import {
   CODEX_OAUTH_CONFIG,
   buildCodexAuthorizationUrl,
   extractAccountClaims,
@@ -107,12 +115,15 @@ export interface CodexSubscriptionServiceDeps {
   now?: () => number;
   /** fetch implementation. Defaults to global fetch (Node 18+). */
   fetchFn?: typeof fetch;
+  /** Shared workspace credential store used as a one-way export for pure-Node callers such as the CLI. */
+  credentialStore?: Pick<CredentialStore, 'setSecret' | 'deleteSecret'>;
 }
 
 export class CodexSubscriptionService {
   private readonly tokenFilePath: string;
   private readonly now: () => number;
   private readonly fetchFn: typeof fetch;
+  private readonly credentialStore?: Pick<CredentialStore, 'setSecret' | 'deleteSecret'>;
 
   private cachedTokens: PersistedTokens | null = null;
   private cachedClaims: AccountClaims | null = null;
@@ -127,6 +138,7 @@ export class CodexSubscriptionService {
     this.tokenFilePath = join(deps.userDataDir, '.codex_subscription_token');
     this.now = deps.now ?? (() => Date.now());
     this.fetchFn = deps.fetchFn ?? (globalThis.fetch as typeof fetch);
+    this.credentialStore = deps.credentialStore;
   }
 
   // -----------------------------------------------------------
@@ -336,14 +348,21 @@ export class CodexSubscriptionService {
     this.lastStorageFailedMessage = null;
     for (const id of [...this.pending.keys()]) this.disposePending(id);
     this.authorizing = false;
+    let localDeleteFailed = false;
     try {
       await fs.unlink(this.tokenFilePath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
-        return { ok: false, reason: 'storage_failed', message: '删除本地凭据失败，请手动清理。' };
+        localDeleteFailed = true;
       }
     }
+    const sharedDeleted = await tryDeleteSharedOAuthToken({
+      credentialStore: this.credentialStore,
+      slug: 'codex-subscription',
+    });
+    if (localDeleteFailed) return { ok: false, reason: 'storage_failed', message: '删除本地凭据失败，请手动清理。' };
+    if (!sharedDeleted) return { ok: false, reason: 'storage_failed', message: '删除共享凭据失败，请手动清理。' };
     return { ok: true };
   }
 
@@ -560,6 +579,7 @@ export class CodexSubscriptionService {
     const buffer = safeStorage.encryptString(serialized);
     await fs.writeFile(this.tokenFilePath, buffer, { mode: 0o600 });
     await fs.chmod(this.tokenFilePath, 0o600);
+    await this.trySaveSharedTokens(tokens);
     this.lastStorageFailedMessage = null;
   }
 
@@ -584,6 +604,7 @@ export class CodexSubscriptionService {
       const parsed = JSON.parse(decoded) as PersistedTokens;
       this.cachedTokens = parsed;
       this.lastStorageFailedMessage = null;
+      await this.trySaveSharedTokens(parsed);
       return parsed;
     } catch {
       // Token file exists but is unreadable (keychain rolled, file
@@ -593,6 +614,14 @@ export class CodexSubscriptionService {
       try { await fs.unlink(this.tokenFilePath); } catch { /* best-effort */ }
       return null;
     }
+  }
+
+  private async trySaveSharedTokens(tokens: PersistedTokens): Promise<void> {
+    await trySaveSharedOAuthToken({
+      credentialStore: this.credentialStore,
+      slug: 'codex-subscription',
+      value: serializeOAuthSubscriptionTokens(tokens),
+    });
   }
 
   private failureFromError(

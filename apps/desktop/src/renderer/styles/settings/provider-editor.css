@@ -252,6 +252,7 @@
 }
 
 .modelTableHeaderText small {
+  font-variant-numeric: tabular-nums;
   font-size: var(--font-size-caption);
   line-height: var(--leading-normal);
   color: var(--foreground-secondary);
@@ -412,6 +413,7 @@
 }
 
 .modelTableRowId {
+  min-width: 0;
   background: transparent;
   font-family: var(--font-mono);
   font-size: var(--font-size-ui);
@@ -599,6 +601,7 @@
 .enabledStripHeader span,
 .providerMarketHeader p,
 .customProviderEntry p {
+  font-variant-numeric: tabular-nums;
   margin: 0;
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);

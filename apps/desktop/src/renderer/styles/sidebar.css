@@ -426,6 +426,7 @@
 }
 
 .maka-search-modal-result-summary {
+  font-variant-numeric: tabular-nums;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -473,6 +474,7 @@
   opacity: 0.7;
 }
 .maka-search-modal-result-title {
+  min-width: 0;
   font-size: var(--font-size-ui);
   font-weight: var(--font-weight-semibold);
   color: var(--foreground);
@@ -481,6 +483,7 @@
   white-space: nowrap;
 }
 .maka-search-modal-result-meta {
+  min-width: 0;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
   overflow: hidden;

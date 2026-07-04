@@ -647,7 +647,7 @@ export function MemorySettingsPage(props: {
                     type="button"
                     variant="quiet"
                     size="sm"
-                    className="settingsInlineTextButton"
+                    className="settingsInlineTextButton min-w-[4rem]"
                     aria-label={`打开项目指令文件 ${file.file}`}
                     disabled={memoryControlsDisabled || isMemoryActionPending(`instruction:${file.file}:open`)}
                     onClick={() => void openWorkspaceInstructionFile(file.file)}
@@ -660,7 +660,7 @@ export function MemorySettingsPage(props: {
                     type="button"
                     variant="quiet"
                     size="sm"
-                    className="settingsInlineTextButton"
+                    className="settingsInlineTextButton min-w-[4rem]"
                     aria-label={`创建项目指令文件 ${file.file}`}
                     disabled={memoryControlsDisabled || isMemoryActionPending(`instruction:${file.file}:create`)}
                     onClick={() => void createWorkspaceInstructionFile(file.file)}
@@ -721,7 +721,7 @@ export function MemorySettingsPage(props: {
                     type="button"
                     variant="quiet"
                     size="sm"
-                    className="settingsInlineTextButton"
+                    className="settingsInlineTextButton min-w-[4rem]"
                     aria-label={`打开备份候选 ${backupCandidateLabel}`}
                     disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending(`backup:${backup.kind}:open`)}
                     onClick={() => void openBackupCandidate(backup)}
@@ -732,7 +732,7 @@ export function MemorySettingsPage(props: {
                     type="button"
                     variant="quiet"
                     size="sm"
-                    className="settingsInlineTextButton"
+                    className="settingsInlineTextButton min-w-[4rem]"
                     aria-label={`恢复备份候选 ${backupCandidateLabel}`}
                     disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending(`backup:${backup.kind}:restore`)}
                     onClick={() => void restoreBackupCandidate(backup)}
@@ -743,7 +743,7 @@ export function MemorySettingsPage(props: {
                     type="button"
                     variant="quiet"
                     size="sm"
-                    className="settingsInlineTextButton"
+                    className="settingsInlineTextButton min-w-[4rem]"
                     aria-label={`复制备份候选引用 ${backupCandidateLabel}`}
                     disabled={isMemoryActionPending(`backup:${backup.kind}:copy`)}
                     onClick={() => void copyBackupReference(backup)}
@@ -784,7 +784,7 @@ export function MemorySettingsPage(props: {
               type="button"
               variant="quiet"
               size="sm"
-              className="settingsInlineTextButton"
+              className="settingsInlineTextButton min-w-[5rem]"
               disabled={!localMemoryPromptPreview || isMemoryActionPending('memory:prompt-preview:copy')}
               onClick={() => void copyLocalMemoryPromptPreview()}
             >
@@ -943,31 +943,31 @@ export function MemorySettingsPage(props: {
       )}
 
       <div className="settingsActionRow" role="group" aria-label="MEMORY.md 文件操作">
-        <Button type="button" disabled={memoryControlsDisabled || !effective.enabled || !memoryDraftDirty} onClick={() => void save()}>
+        <Button type="button" className="min-w-[3.5rem]" disabled={memoryControlsDisabled || !effective.enabled || !memoryDraftDirty} onClick={() => void save()}>
           {pendingMemoryWriteAction === 'save' ? '保存中…' : memoryDraftDirty ? '保存' : '已保存'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:file:open')} onClick={() => void openFile()}>
+        <Button type="button" variant="ghost" className="min-w-[7.5rem]" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:file:open')} onClick={() => void openFile()}>
           {isMemoryActionPending('memory:file:open') ? '打开中…' : '打开 MEMORY.md'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:folder:open')} onClick={() => void openFolder()}>
+        <Button type="button" variant="ghost" className="min-w-[6rem]" disabled={memoryControlsDisabled || !effective.enabled || isMemoryActionPending('memory:folder:open')} onClick={() => void openFolder()}>
           {isMemoryActionPending('memory:folder:open') ? '打开中…' : '打开所在目录'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reloadDraftFromDisk()}>
+        <Button type="button" variant="ghost" className="min-w-[4rem]" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reloadDraftFromDisk()}>
           {pendingMemoryWriteAction === 'reload' ? '载入中…' : '重新载入'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:open')} onClick={() => void openLatestBackup()}>
+        <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:open')} onClick={() => void openLatestBackup()}>
           {isMemoryActionPending('backup:latest:open') ? '打开中…' : '打开上一版'}
         </Button>
-        <Button type="button" variant="ghost" disabled={!effective.path || isMemoryActionPending('memory:path:copy')} onClick={() => void copyPath()}>
+        <Button type="button" variant="ghost" className="min-w-[4rem]" disabled={!effective.path || isMemoryActionPending('memory:path:copy')} onClick={() => void copyPath()}>
           {isMemoryActionPending('memory:path:copy') ? '复制中…' : '复制路径'}
         </Button>
-        <Button type="button" variant="ghost" disabled={!effective.latestBackup || (effective.latestBackup ? isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) : false)} onClick={() => void copyLatestBackupReference()}>
+        <Button type="button" variant="ghost" className="min-w-[7rem]" disabled={!effective.latestBackup || (effective.latestBackup ? isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) : false)} onClick={() => void copyLatestBackupReference()}>
           {effective.latestBackup && isMemoryActionPending(`backup:${effective.latestBackup.kind}:copy`) ? '复制中…' : '复制上一版引用'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reset()}>
+        <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled} onClick={() => void reset()}>
           {pendingMemoryWriteAction === 'reset' ? '重置中…' : '重置并备份'}
         </Button>
-        <Button type="button" variant="ghost" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:restore')} onClick={() => void restoreLatestBackup()}>
+        <Button type="button" variant="ghost" className="min-w-[5rem]" disabled={memoryControlsDisabled || !effective.enabled || !effective.latestBackup || isMemoryActionPending('backup:latest:restore')} onClick={() => void restoreLatestBackup()}>
           {isMemoryActionPending('backup:latest:restore') ? '恢复中…' : '恢复上一版'}
         </Button>
       </div>
@@ -1053,7 +1053,7 @@ function MemoryEntryList(props: {
                         type="button"
                         variant="quiet"
                         size="sm"
-                        className="settingsInlineTextButton"
+                        className="settingsInlineTextButton min-w-[4rem]"
                         disabled={copyPending}
                         onClick={() => void props.onCopyReference?.(entry)}
                       >
@@ -1076,7 +1076,7 @@ function MemoryEntryList(props: {
                         type="button"
                         variant="quiet"
                         size="sm"
-                        className="settingsInlineTextButton"
+                        className="settingsInlineTextButton min-w-[5rem]"
                         aria-label={statusActionAriaLabel}
                         disabled={props.busy}
                         onClick={() => void props.onStatusChange?.(entry, props.archived ? 'active' : 'archived')}

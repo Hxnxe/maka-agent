@@ -258,6 +258,7 @@
 }
 
 .maka-plan-template-note {
+  min-width: 0;
   color: var(--muted-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -718,6 +719,7 @@
 }
 
 .maka-plan-search-summary {
+  font-variant-numeric: tabular-nums;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -866,6 +868,7 @@
 }
 
 .maka-plan-run-main strong {
+  min-width: 0;
   color: var(--foreground);
   font-size: var(--font-size-ui);
   overflow: hidden;

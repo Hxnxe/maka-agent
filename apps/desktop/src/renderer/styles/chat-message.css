@@ -118,8 +118,15 @@
 }
 .maka-bubble-assistant > :first-child { margin-top: 0; }
 .maka-bubble-assistant > :last-child { margin-bottom: 0; }
-.maka-bubble-assistant > :nth-last-child(2) { margin-bottom: 0; }
-.maka-prose > p:nth-last-child(2) { display: inline; }
+/* Streaming caret rides the last text line: the caret is
+   `.maka-bubble-streaming::after`, and after a block-level trailing <p> it
+   would wrap onto its own anonymous line. Inline the trailing paragraph
+   only while streaming. (PR #212 used `:nth-last-child(2)` variants of
+   this + the margin reset above because the bubble then ended with an
+   inline timestamp child; the timestamp moved to the turn footer and the
+   stale hacks instead zeroed/inlined the second-to-last *markdown* block —
+   issue #546 Phase B.) */
+.maka-bubble-streaming > p:last-child { display: inline; }
 .maka-prose p {
   margin: 0 0 var(--space-3);
   text-wrap: pretty;
@@ -128,7 +135,12 @@
 .maka-prose h2,
 .maka-prose h3,
 .maka-prose h4 {
-  margin: var(--space-4) 0 var(--space-2);
+  /* Section rhythm keyed to the 12px paragraph gap: 20px above (clearly
+     more than a paragraph break, so sections separate) and 12px below
+     (exactly the paragraph rhythm, so the heading holds its section).
+     The old 16/8 sat too close to the paragraph gap on both sides —
+     headings neither separated sections nor matched the body rhythm. */
+  margin: var(--space-5) 0 var(--space-3);
   line-height: var(--leading-tight);
   font-weight: var(--font-weight-semibold);
   text-wrap: balance;
@@ -140,10 +152,16 @@
 .maka-prose code {
   font-variant-numeric: tabular-nums;
 }
-.maka-prose h1 { font-size: 1.4667em; }
-.maka-prose h2 { font-size: 1.2667em; }
-.maka-prose h3 { font-size: 1.0667em; }
-.maka-prose h4 { font-size: 0.9333em; color: var(--foreground-secondary); }
+/* Heading ladder re-pinned for the 13px body base (#546 Phase B): the old
+   em values were derived for 15px (22/19/16/14) and landed on fractional
+   pixels at 13 (19.07/16.47/13.87/12.13), with h3 only 0.87px above body
+   and h4 *below* body. Integer targets now: 19 / 16 / 14 / 13. h4 sits at
+   1em and reads as a heading via weight + secondary color (same convention
+   as GitHub's 1em h4). */
+.maka-prose h1 { font-size: 1.4615em; }
+.maka-prose h2 { font-size: 1.2308em; }
+.maka-prose h3 { font-size: 1.0769em; }
+.maka-prose h4 { font-size: 1em; color: var(--foreground-secondary); }
 .maka-prose ul,
 .maka-prose ol {
   margin: 0 0 var(--space-3);
@@ -185,13 +203,18 @@
   /* 0.92em of the 13px body ≈ 12px; at 0.86em it would fall to caption
      size (11.2px) and stop reading as body-level code. */
   font-size: 0.92em;
-  padding: 1px var(--space-1-5);
+  /* No vertical padding and no border: the Geist Mono font box is already
+     15.5px at this size, and with 1px padding + 1px border the pill's ink
+     box hit 19.5px — the full line box — so hard-break lines carrying
+     pills touched (measured 1.5px to the next line's glyphs, 0 between
+     two pills). Bg-only pills leave ~5.5px of inter-line air, matching
+     plain text; the dropped border was 3% alpha and read as invisible. */
+  padding: 0 var(--space-1-5);
   /* PR-UI-LAYOUT-28: inline code radius 4 → 5. Tiny bump but
    * pulls it slightly out of the "tight tag" feel into a calmer
    * pill rhythm that matches the rest of the warm-canvas chrome. */
   border-radius: var(--radius-control);
   background: var(--foreground-5);
-  border: var(--border-width-hairline) solid oklch(from var(--foreground) l c h / 0.03);
 }
 /* Block code goes inside a maka-code-block wrapper that adds a language
    pill + copy button on top of the pre. Pre keeps its monospace styling
@@ -278,6 +301,10 @@
   padding: 0;
   background: transparent;
   font-size: inherit;
+  /* The inline-code pill border must not leak in here: <code> is an inline
+     box, so a leftover border paints a rounded outline around every wrapped
+     line box inside the pre (clearly visible in dark). */
+  border: 0;
 }
 
 /* Syntax highlight palette for highlight.js / lowlight class names.
@@ -336,39 +363,65 @@
   border-radius: 0 var(--radius-surface) var(--radius-surface) 0;
   color: var(--foreground-secondary);
 }
+/* Inner block margins would stack on the quote's own padding (8px top vs
+   8px + trailing p margin = 20px bottom) and tilt the quote visually. */
+.maka-prose blockquote > :first-child { margin-top: 0; }
+.maka-prose blockquote > :last-child { margin-bottom: 0; }
+/* Borderless minimal table (#546 Phase B, picked from a four-way style
+   comparison): no outer frame or header fill — the header reads via
+   semibold + a reinforced rule, rows via hairline separators. Replaces
+   the PR-UI-LAYOUT-28 card chrome (radius + outer hairline + th tint):
+   the 3% th tint was invisible in practice and the frame boxed the
+   table in for no informational gain. */
 .maka-prose table {
-  width: 100%;
+  /* Shrink-wrap to content (GitHub's markdown-table shape): a short
+     three-column table stretched to the full measure reads as voids
+     between columns. `display: block` makes the element a scroll
+     container, `max-content` lets narrow tables hug their cells, and the
+     100% cap + overflow-x turns over-wide tables into a horizontal
+     scroller inside the prose measure. The rows re-wrap in an anonymous
+     inner table box: `border-collapse` is inherited so `separate`
+     reaches it; `border-spacing` is NOT inherited — its initial value
+     is already 0, the declaration below just documents the intent. */
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   margin: 0 0 var(--space-3);
-  border-collapse: collapse;
+  /* `separate` + zero spacing: cells only paint bottom borders, so the
+     row separators stay seamless single hairlines. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: var(--font-size-ui);
-  overflow: hidden;
-  /* PR-UI-LAYOUT-28: table radius 8 → 10 joins the card family,
-   * and a hairline outer border gives the table chrome a clean
-   * edge against the warm panel. Without the border the rounded
-   * corners would clip nothing visible. */
-  border-radius: var(--radius-surface);
-  border: var(--border-width-hairline) solid var(--border);
 }
 .maka-prose th,
 .maka-prose td {
-  padding: var(--space-2) var(--space-3);
+  /* Frameless tables read denser: 8px vertical padding made rows 36.5px —
+     the inter-row whitespace was 2.5× the paragraph line gap and rows
+     floated apart. 6px lands rows at ~32px. */
+  padding: var(--space-1-5) var(--space-3);
   border-bottom: var(--border-width-hairline) solid var(--border);
   text-align: left;
 }
-/* PR-UI-LAYOUT-28: drop the trailing border on the last row so the
- * rounded corner reads cleanly. */
-.maka-prose tr:last-child th,
-.maka-prose tr:last-child td {
+/* Without a frame the table must not end on a stray rule. Scoped to
+   tbody: the thead row is its parent's :last-child too, and an unscoped
+   `tr:last-child th` (0,2,2) out-specifies `.maka-prose th` (0,1,1) —
+   it would erase the reinforced header rule below. */
+.maka-prose tbody tr:last-child th,
+.maka-prose tbody tr:last-child td {
   border-bottom: 0;
 }
 .maka-prose th {
   color: var(--foreground-secondary);
   font-weight: var(--font-weight-semibold);
-  background: var(--foreground-3);
-  /* PR-UI-LAYOUT-28: header tone slightly darker than body cell
-   * to make the header row read at first glance — was the same
-   * `--foreground-3` as nothing else, now sits between cell and
-   * code-block tints. */
+  /* Frameless header: no fill — semibold plus a rule visibly stronger
+     than the hairline row separators carries the header/body split. */
+  border-bottom: var(--border-width-hairline) solid oklch(from var(--foreground) l c h / 0.25);
+  /* Headers are short labels; letting them wrap means a column-squeezed
+     table pulverizes 2-char CJK headers into vertical stacks. Locking
+     them to one line raises the table's min-content width so degenerate
+     tables hit the overflow-x scroller instead. Body cells still wrap. */
+  white-space: nowrap;
   letter-spacing: var(--tracking-normal);
 }
 .maka-prose hr {
@@ -476,6 +529,12 @@
   vertical-align: -2px;
 }
 @keyframes maka-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* When the truncation badge (`role="status"`, chat-view.tsx) is the last
+   child, the caret sits after the badge instead of the text. Accepted: the
+   badge does NOT mean the stream froze — `applyAssistantDelta` also sets
+   `truncated` for a single over-large delta (per-delta cap) while later
+   deltas keep appending, so hiding the caret there would kill a live
+   indicator. CSS can't tell the two truncation kinds apart. */
 @media (prefers-reduced-motion: reduce) {
   .maka-bubble-streaming::after { animation: none; opacity: 1; }
 }

@@ -88,8 +88,8 @@ describe('MARKDOWN-PROSE-CONVERGE-0 contract (#546 PR4)', () => {
     for (const el of PROSE_ELEMENTS) {
       // `.maka-bubble-assistant <el>` as a descendant — the old prose form.
       // The shell's own `.maka-bubble-assistant {…}` and its generic
-      // `> :first-child` / `> :last-child` / `> :nth-last-child(2)` resets
-      // are element-agnostic, so they don't trip this (no bare element type).
+      // `> :first-child` / `> :last-child` resets are element-agnostic, so
+      // they don't trip this (no bare element type).
       const re = new RegExp(`\\.maka-bubble-assistant\\s+${el}\\b`);
       if (re.test(stripCssComments(css))) lingering.push(el);
     }
@@ -161,6 +161,109 @@ describe('CODE-BLOCK-PRE-FONT-TIER-0 contract (#546 PR5)', () => {
       css,
       /\[data-slot="message"\]\s+pre\s*\{[^}]*font:\s*inherit/,
       'the [data-slot="message"] pre { font: inherit } reset must remain so non-code-block raw <pre> (user / system) inherits the message font instead of UA monospace',
+    );
+  });
+});
+
+describe('PROSE-POLISH-13PX-0 contract (#546 Phase B)', () => {
+  // Four rendering defects fixed in the 13px prose-polish pass. Each is the
+  // kind of regression that survives visual review (subtle in light theme,
+  // state-dependent, or masked by fixture structure), so the shape of the
+  // fix is pinned here.
+
+  it('no structural :nth-last-child hacks on prose containers (PR #212 timestamp leftovers)', async () => {
+    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    // The bubble stopped ending with an inline timestamp child long ago;
+    // these selectors instead zeroed/inlined the second-to-last *markdown*
+    // block (paragraph glued to a heading/table/code block above it).
+    assert.ok(
+      !/\.maka-bubble-assistant\s*>\s*:nth-last-child/.test(css)
+      && !/\.maka-prose\s*>\s*p:nth-last-child/.test(css),
+      'structural :nth-last-child prose hacks must not return — they assume a trailing non-markdown child that no longer exists',
+    );
+    // The streaming caret still needs the trailing paragraph inlined, but
+    // scoped to the streaming bubble only.
+    assert.match(
+      css,
+      /\.maka-bubble-streaming\s*>\s*p:last-child\s*\{[^}]*display:\s*inline/,
+      'the caret-inline rule must be scoped to .maka-bubble-streaming so committed messages and .maka-prose reusers (tool results, #546 PR6) keep block paragraphs',
+    );
+    // Negative side of the same contract: an unscoped variant on the
+    // committed-message classes would inline the final paragraph of every
+    // settled message — the exact regression this pass removed.
+    assert.ok(
+      !/\.maka-prose\s*>\s*p:last-child/.test(css)
+      && !/\.maka-bubble-assistant\s*>\s*p:last-child/.test(css),
+      'no p:last-child inlining on .maka-prose / .maka-bubble-assistant — committed messages must keep block paragraphs',
+    );
+  });
+
+  it('the code-block pre code reset clears the inline-code border', async () => {
+    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const reset = blocks.find(({ selectors, decls }) =>
+      /\.maka-code-block\s+pre\s+code\b/.test(selectors) && /border:\s*0/.test(decls));
+    assert.ok(
+      reset,
+      '`.maka-prose .maka-code-block pre code` must reset `border: 0` — the inline-code pill dropped its border in this pass, but if one ever returns it paints a rounded outline around every wrapped line box inside the pre (inline elements paint per line box)',
+    );
+  });
+
+  it('prose tables are frameless with a reinforced header rule', async () => {
+    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const table = blocks.find(({ selectors }) => /^\.maka-prose\s+table$/.test(selectors));
+    assert.ok(table, 'expected a .maka-prose table rule');
+    // Style picked from a four-way comparison (#546 Phase B): no outer
+    // frame, no radius, no header fill — the header/body split is carried
+    // by semibold + a rule stronger than the hairline row separators.
+    assert.ok(
+      !/(^|;)\s*border\s*:/.test(table!.decls) && !/border-radius/.test(table!.decls),
+      'prose tables are frameless — no outer border/radius on .maka-prose table',
+    );
+    // `border-collapse` is the declaration that actually reaches the
+    // anonymous inner table box (inherited); `border-spacing: 0` is intent
+    // documentation — the property is not inherited and its initial value
+    // is already 0.
+    assert.match(table!.decls, /border-collapse:\s*separate/, 'separate border model — collapse would void radius/outer borders if chrome ever returns');
+    assert.match(table!.decls, /border-spacing:\s*0/, 'zero border-spacing keeps the row separators seamless single hairlines');
+    const th = blocks.find(({ selectors }) => /^\.maka-prose\s+th$/.test(selectors));
+    assert.ok(th, 'expected a .maka-prose th rule');
+    assert.ok(
+      !/background/.test(th!.decls)
+      && /border-bottom:\s*var\(--border-width-hairline\)\s+solid\s+oklch\(from var\(--foreground\)/.test(th!.decls),
+      'th carries no fill and a foreground-alpha rule stronger than --border for the header split',
+    );
+    // Cascade guard: the last-row border reset must be tbody-scoped. The
+    // GFM thead row is its parent's :last-child too, and an unscoped
+    // `.maka-prose tr:last-child th` (0,2,2) out-specifies `.maka-prose th`
+    // (0,1,1) — it silently erases the reinforced header rule asserted
+    // above while this declaration-level scan keeps passing.
+    assert.ok(
+      !/\.maka-prose\s+tr:last-child/.test(css),
+      'the last-row border reset must not use an unscoped `.maka-prose tr:last-child` — it matches the thead row and kills the header rule; scope it to tbody',
+    );
+    assert.match(
+      css,
+      /\.maka-prose\s+tbody\s+tr:last-child\s+th,\s*\.maka-prose\s+tbody\s+tr:last-child\s+td\s*\{[^}]*border-bottom:\s*0/,
+      'frameless tables must still drop the stray rule under the final body row',
+    );
+  });
+
+  it('blockquote inner block margins are neutralized at both ends', async () => {
+    const css = stripCssComments(await readFile(CHAT_MESSAGE_CSS, 'utf8'));
+    const blocks = cssBlocks(css);
+    const last = blocks.find(({ selectors, decls }) =>
+      /\.maka-prose\s+blockquote\s*>\s*:last-child/.test(selectors) && /margin-bottom:\s*0/.test(decls));
+    assert.ok(
+      last,
+      'blockquote > :last-child must zero margin-bottom — a trailing p margin stacks on the quote padding (8px top vs 20px bottom) and tilts the quote',
+    );
+    const first = blocks.find(({ selectors, decls }) =>
+      /\.maka-prose\s+blockquote\s*>\s*:first-child/.test(selectors) && /margin-top:\s*0/.test(decls));
+    assert.ok(
+      first,
+      'blockquote > :first-child must zero margin-top — the other end of the same stacking asymmetry',
     );
   });
 });

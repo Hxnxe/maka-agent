@@ -1982,7 +1982,231 @@ describe('Maka Pi TUI runner', () => {
     ]);
   });
 
+  test('enables focus reporting and sets the initial terminal title', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    await waitFor(() => terminal.output().includes('\x1b[?1004h'));
+    assert.ok(terminal.titles.includes('Maka'));
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('rings the bell and marks the title when a long turn ends unfocused', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      // Zero threshold: every completed turn counts as long, so the test drives
+      // the ring path without waiting real seconds.
+      attentionLongTurnThresholdMs: 0,
+      terminal,
+    });
+
+    // Report the terminal as backgrounded, then run a turn to completion.
+    terminal.input('\x1b[O');
+    terminal.input('go');
+    terminal.input('\r');
+
+    await waitFor(() => driver.prompts.length === 1);
+    await waitFor(() => bellCount(terminal) === 1);
+    assert.ok(terminal.titles.includes('● Maka'), 'title marks busy during the turn');
+    assert.ok(terminal.titles.includes('★ Maka'), 'title marks attention after the unfocused finish');
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('does not ring when a short turn ends unfocused', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      // Default (large) threshold: the immediate-complete turn is far too short.
+      terminal,
+    });
+
+    terminal.input('\x1b[O');
+    terminal.input('go');
+    terminal.input('\r');
+
+    await waitFor(() => driver.prompts.length === 1);
+    await delay(30);
+    assert.equal(bellCount(terminal), 0);
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('does not ring when a long turn ends while still focused', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new SlashCommandDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      attentionLongTurnThresholdMs: 0,
+      terminal,
+    });
+
+    // No blur report: the terminal is assumed focused, so a finished turn is
+    // silent — the user is watching it.
+    terminal.input('go');
+    terminal.input('\r');
+
+    await waitFor(() => driver.prompts.length === 1);
+    await delay(30);
+    assert.equal(bellCount(terminal), 0);
+    assert.equal(terminal.titles.includes('★ Maka'), false);
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('rings when a permission prompt appears unfocused', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new PermissionPromptDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('\x1b[O');
+    terminal.input('run');
+    terminal.input('\r');
+
+    await waitFor(() => driver.permissionRequests === 1);
+    await waitFor(() => bellCount(terminal) >= 1);
+    assert.ok(terminal.titles.includes('★ Maka'));
+
+    // Answer so the parked turn can finish and the TUI closes cleanly.
+    terminal.input('y');
+    await waitFor(() => driver.permissionResponses.length === 1);
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('rings when a short turn fails unfocused', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new QuickErrorDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      // Default (large) threshold: the ring must come from the error path, not
+      // from turn duration — the turn fails immediately.
+      terminal,
+    });
+
+    terminal.input('\x1b[O');
+    terminal.input('go');
+    terminal.input('\r');
+
+    await waitFor(() => plainTerminalOutput(terminal.output()).includes('turn failed'));
+    await waitFor(() => bellCount(terminal) === 1);
+    assert.ok(terminal.titles.includes('★ Maka'));
+
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+  });
+
+  test('clears the busy title marker when Ctrl-C exits mid-turn', async () => {
+    const terminal = new FakeTerminal();
+    const driver = new InterruptibleTurnDriver();
+    const run = runMakaPiTui({
+      title: 'Maka',
+      driver,
+      cwd: '/repo',
+      model: 'claude-sonnet-4-5',
+      connectionSlug: 'claude-subscription',
+      permissionMode: 'ask',
+      terminal,
+    });
+
+    terminal.input('run');
+    terminal.input('\r');
+    await waitFor(() => terminal.titles.includes('● Maka'));
+
+    // Quit while the turn is still parked: close() must reset the title so the
+    // shell tab is not left marked busy after Maka exits.
+    terminal.input('\x03');
+    await Promise.race([
+      run,
+      delay(50).then(() => {
+        throw new Error('TUI did not close after Ctrl-C');
+      }),
+    ]);
+    assert.equal(terminal.titles.at(-1), 'Maka');
+  });
+
 });
+
+/** Count the standalone BEL bytes the attention layer wrote. */
+function bellCount(terminal: FakeTerminal): number {
+  return terminal.writes.filter((write) => write === '\x07').length;
+}
 
 class RejectingStopDriver implements MakaSessionDriver {
   stopCalls = 0;
@@ -3104,6 +3328,44 @@ class PermissionThenErrorDriver implements MakaSessionDriver {
     this.respondCalls += 1;
   }
 
+  async renameSession(): Promise<void> {}
+  async setModel(): Promise<void> {}
+  async setPermissionMode(): Promise<void> {}
+  async setThinkingLevel(): Promise<void> {}
+  async switchSession(sessionId: string): Promise<MakaSessionSwitchResult> {
+    return switchResult(fakeSessionSummary(sessionId));
+  }
+
+  getSessionId(): string {
+    return 'session-1';
+  }
+}
+
+class QuickErrorDriver implements MakaSessionDriver {
+  readonly prompts: string[] = [];
+
+  async listSessions(): Promise<SessionSummary[]> {
+    return [];
+  }
+
+  async *compactSession(): AsyncIterable<never> {}
+
+  async *sendPrompt(prompt: string): AsyncIterable<SessionEvent> {
+    this.prompts.push(prompt);
+    // The turn fails immediately, so its duration never crosses the long-turn
+    // threshold — the attention ring must come from the error, not the timer.
+    yield {
+      type: 'error',
+      id: 'event-error',
+      turnId: 'turn-1',
+      ts: 1,
+      message: 'turn failed',
+      recoverable: false,
+    };
+  }
+
+  async stop(): Promise<void> {}
+  async respondToPermission(_response: PermissionResponse): Promise<void> {}
   async renameSession(): Promise<void> {}
   async setModel(): Promise<void> {}
   async setPermissionMode(): Promise<void> {}

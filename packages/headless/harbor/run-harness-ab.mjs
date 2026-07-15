@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,11 @@ import {
   resolveFixedPromptRunRoot,
 } from '#fixed-prompt-task-source';
 import { createHarborTaskRunner } from '#harbor-task-runner';
+import {
+  OPENCODE_TOOLCHAIN_FINGERPRINT,
+  OPENCODE_TOOLCHAIN_SPEC,
+  prepareOpenCodeToolchain,
+} from '#opencode-toolchain';
 import {
   assertTerminalBench21TaskSet,
   assertTerminalBench21TaskTreeFingerprint,
@@ -42,7 +48,6 @@ const PROVIDER = 'zai-coding-plan';
 const MODEL = 'glm-5.2';
 const MODEL_SPEC = `${PROVIDER}/${MODEL}`;
 const REASONING_EFFORT = 'max';
-const OPENCODE_VERSION = '1.17.18';
 const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 const ORDER_SEED = 'terminal-bench-2.1:glm-5.2:maka-vs-opencode:v1';
 const PRICING = {
@@ -93,6 +98,59 @@ export function harnessMakaContextBudgetEnv() {
   };
 }
 
+export function buildHarnessAbManifest({
+  subjectFingerprint,
+  taskSourceFingerprint,
+  toolchainFingerprint,
+}) {
+  return buildHarnessAbRunManifest({
+    benchmark: {
+      dataset: 'terminal-bench',
+      version: '2.1',
+      revision: TERMINAL_BENCH_2_1_REVISION,
+      timeoutPolicy: 'task-native',
+      timeoutMultiplier: 1,
+      outerTimeoutGraceSec: HARBOR_SETUP_TEARDOWN_GRACE_SEC,
+    },
+    taskIds: TERMINAL_BENCH_2_1_TASK_IDS,
+    orderSeed: ORDER_SEED,
+    pilotTaskCount: PILOT_TASKS,
+    model: { provider: PROVIDER, id: MODEL, reasoningEffort: REASONING_EFFORT },
+    pricing: PRICING,
+    arms: [
+      {
+        id: 'maka',
+        version: subjectFingerprint,
+        config: {
+          adapter: 'maka_agent:MakaAgent',
+          externalSystemPrompt: 'empty',
+          reasoningEffort: REASONING_EFFORT,
+          continuation: false,
+          attemptPolicy: 'single',
+          contextBudget: HARNESS_MAKA_CONTEXT_BUDGET,
+        },
+      },
+      {
+        id: 'opencode',
+        version: OPENCODE_TOOLCHAIN_SPEC.opencode.version,
+        config: {
+          adapter: 'opencode_agent:MakaOpenCodeAgent',
+          externalSystemPrompt: 'empty',
+          variant: REASONING_EFFORT,
+          pure: true,
+          permissions: 'auto',
+          attemptPolicy: 'single',
+        },
+      },
+    ],
+    taskBudgetSec: null,
+    harborTimeoutMs: null,
+    subjectFingerprint,
+    taskSourceFingerprint,
+    toolchainFingerprint,
+  });
+}
+
 export async function main() {
   const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
   const makaRepoPath = process.env.MAKA_HARNESS_AB_MAKA_REPO
@@ -135,53 +193,16 @@ async function runLocked({ repoRoot, makaRepoPath, tasksRoot, runId, limit, runR
     makaRepoPath,
     process.env.MAKA_HARNESS_AB_EXPLICIT_SUBJECT_FINGERPRINT,
   );
-  const toolchainFingerprint = await buildToolchainFingerprint(
+  const hostToolchainFingerprint = await buildToolchainFingerprint(
     process.env.MAKA_HARNESS_AB_TOOLCHAIN_FINGERPRINT,
     undefined,
     makaRepoPath,
   );
-  const manifest = buildHarnessAbRunManifest({
-    benchmark: {
-      dataset: 'terminal-bench',
-      version: '2.1',
-      revision: TERMINAL_BENCH_2_1_REVISION,
-      timeoutPolicy: 'task-native',
-      timeoutMultiplier: 1,
-      outerTimeoutGraceSec: HARBOR_SETUP_TEARDOWN_GRACE_SEC,
-    },
-    taskIds: TERMINAL_BENCH_2_1_TASK_IDS,
-    orderSeed: ORDER_SEED,
-    pilotTaskCount: PILOT_TASKS,
-    model: { provider: PROVIDER, id: MODEL, reasoningEffort: REASONING_EFFORT },
-    pricing: PRICING,
-    arms: [
-      {
-        id: 'maka',
-        version: subjectFingerprint,
-        config: {
-          adapter: 'maka_agent:MakaAgent',
-          externalSystemPrompt: 'empty',
-          reasoningEffort: REASONING_EFFORT,
-          continuation: false,
-          attemptPolicy: 'single',
-          contextBudget: HARNESS_MAKA_CONTEXT_BUDGET,
-        },
-      },
-      {
-        id: 'opencode',
-        version: OPENCODE_VERSION,
-        config: {
-          adapter: 'opencode_agent:MakaOpenCodeAgent',
-          externalSystemPrompt: 'empty',
-          variant: REASONING_EFFORT,
-          pure: true,
-          permissions: 'auto',
-          attemptPolicy: 'single',
-        },
-      },
-    ],
-    taskBudgetSec: null,
-    harborTimeoutMs: null,
+  const toolchainFingerprint = `sha256:${createHash('sha256').update(JSON.stringify({
+    hostToolchainFingerprint,
+    opencodeToolchainFingerprint: OPENCODE_TOOLCHAIN_FINGERPRINT,
+  })).digest('hex')}`;
+  const manifest = buildHarnessAbManifest({
     subjectFingerprint,
     taskSourceFingerprint,
     toolchainFingerprint,
@@ -196,6 +217,11 @@ async function runLocked({ repoRoot, makaRepoPath, tasksRoot, runId, limit, runR
     console.log(`dry-run: ${limit}/${EXPECTED_TASKS} paired Pass@1 cells planned -> ${manifestPath}`);
     return;
   }
+
+  const opencodeToolchainPath = process.env.MAKA_HARNESS_AB_OPENCODE_TOOLCHAIN
+    ? resolve(process.env.MAKA_HARNESS_AB_OPENCODE_TOOLCHAIN)
+    : join(runRoot, 'toolchains', `opencode-${OPENCODE_TOOLCHAIN_SPEC.opencode.version}-linux-x64`);
+  await prepareOpenCodeToolchain(opencodeToolchainPath);
 
   const keyFile = envPath('MAKA_HARNESS_AB_KEY_FILE', join(repoRoot, '.local-secrets/zai-key'));
   if ((await readFile(keyFile, 'utf8')).trim().length === 0) throw new Error('MAKA_HARNESS_AB_KEY_FILE is empty');
@@ -224,6 +250,7 @@ async function runLocked({ repoRoot, makaRepoPath, tasksRoot, runId, limit, runR
     pricing,
     agentEnv: { ZAI_BASE_URL: BASE_URL },
     timeoutMultiplier: 1,
+    dockerPlatform: 'linux/amd64',
   };
   const makaContextBudgetEnv = harnessMakaContextBudgetEnv();
   const config = (id) => ({
@@ -258,7 +285,8 @@ async function runLocked({ repoRoot, makaRepoPath, tasksRoot, runId, limit, runR
         harborRunner: createHarborTaskRunner({
           ...runnerOptions,
           agent: 'opencode',
-          agentVersion: OPENCODE_VERSION,
+          agentVersion: OPENCODE_TOOLCHAIN_SPEC.opencode.version,
+          opencodeToolchainPath,
         }),
       },
     ],

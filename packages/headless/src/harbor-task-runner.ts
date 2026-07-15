@@ -25,6 +25,11 @@ import {
   providerCredentialEnv,
   requireProviderCredentialEnv,
 } from './provider-env.js';
+import {
+  OPENCODE_TOOLCHAIN_CONTAINER_PATH,
+  OPENCODE_TOOLCHAIN_FINGERPRINT,
+  OPENCODE_TOOLCHAIN_SPEC,
+} from './opencode-toolchain.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +68,10 @@ export interface HarborTaskRunnerOptions {
   agent?: 'maka' | 'opencode';
   /** Version passed to Harbor's installed-agent adapter (used to pin OpenCode). */
   agentVersion?: string;
+  /** Prepared OpenCode toolchain mounted read-only into task containers. */
+  opencodeToolchainPath?: string;
+  /** Explicit Docker target platform shared by comparison arms. */
+  dockerPlatform?: 'linux/amd64';
   /** Base directory under which each task gets an isolated per-task job dir. */
   jobsDir: string;
   /** MAKA_MODEL, e.g. "deepseek/deepseek-v4-flash". */
@@ -404,8 +413,17 @@ export function buildHarborJobConfig(
   const makaModel = modelIdForProvider(options.model, provider);
   const adapter = options.agent ?? 'maka';
   const agentModel = adapter === 'opencode' ? modelForOpenCode(options.model, provider) : makaModel;
+  if (adapter === 'opencode' && !options.opencodeToolchainPath) {
+    throw new Error('opencodeToolchainPath is required for the OpenCode adapter');
+  }
+  if (adapter === 'opencode' && options.agentVersion !== OPENCODE_TOOLCHAIN_SPEC.opencode.version) {
+    throw new Error(`OpenCode adapter version must match toolchain version ${OPENCODE_TOOLCHAIN_SPEC.opencode.version}`);
+  }
   const mounts: Array<Record<string, unknown>> = [
     { type: 'bind', source: options.makaRepoPath, target: CONTAINER_MAKA_REPO, read_only: true },
+    ...(adapter === 'opencode'
+      ? [{ type: 'bind', source: options.opencodeToolchainPath!, target: OPENCODE_TOOLCHAIN_CONTAINER_PATH, read_only: true }]
+      : []),
   ];
 
   const agentEnv: Record<string, string> = {
@@ -419,6 +437,9 @@ export function buildHarborJobConfig(
   if (options.reasoningEffort) {
     agentEnv.MAKA_REASONING_EFFORT = options.reasoningEffort;
     if (adapter === 'opencode') agentEnv.MAKA_OPENCODE_VARIANT = options.reasoningEffort;
+  }
+  if (adapter === 'opencode') {
+    agentEnv.MAKA_OPENCODE_TOOLCHAIN_FINGERPRINT = OPENCODE_TOOLCHAIN_FINGERPRINT;
   }
 
   if (options.pricing) {
@@ -452,6 +473,9 @@ export function buildHarborJobConfig(
       force_build: false,
       delete: true,
       mounts,
+      ...(options.dockerPlatform === 'linux/amd64'
+        ? { extra_docker_compose: [join(options.makaRepoPath, 'packages/headless/harbor/docker-compose-linux-amd64.yaml')] }
+        : {}),
     },
     verifier: { env: {}, disable: false },
     metrics: [{ type: 'mean', kwargs: {} }],

@@ -77,8 +77,14 @@ describe('attachment frontend contract', () => {
     // pending attachments are carried as items in sessions.send, ingested main-side at send time.
     assert.match(chatActions, /toIngestItems\(pending\)/);
     assert.match(chatActions, /sessions\.send[\s\S]*attachmentItems/);
-    assert.match(appShell, /onPickAttachments=\{pickAttachments\}/);
-    assert.match(appShell, /onAttachFilePaths=\{attachFilePaths\}/);
+    assert.match(
+      appShell,
+      /onPickAttachments=\{[\s\S]*revisionDraft[\s\S]*\? undefined[\s\S]*: pickAttachments/,
+    );
+    assert.match(
+      appShell,
+      /onAttachFilePaths=\{[\s\S]*revisionDraft[\s\S]*\? undefined[\s\S]*: attachFilePaths/,
+    );
   });
 
   it('passes selected model vision capability to the runtime attachment renderer', async () => {

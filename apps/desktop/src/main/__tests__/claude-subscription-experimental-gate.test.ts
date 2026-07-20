@@ -434,8 +434,8 @@ describe('Claude OAuth model connection bridge', () => {
     );
     assert.match(
       src,
-      /normalizeOpenAiCodexModels\(existing\.models, fallbackModels\)/,
-      'Codex OAuth sync must migrate stale unsupported model lists',
+      /hasFetchedSnapshot[\s\S]*normalizeOpenAiCodexModels\(existing\.models \?\? \[\], \[\]\)/,
+      'Codex OAuth sync must preserve authoritative fetched snapshots without reviving fallback ids',
     );
     assert.match(
       src,

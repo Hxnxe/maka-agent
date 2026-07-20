@@ -52,6 +52,25 @@ describe('models.dev provider conformance', () => {
     assert.deepEqual(result, { ok: true, latencyMs: result.latencyMs, modelTested: 'gpt-5.4' });
   });
 
+  test('connection probe does not revive fallback ids from an authoritative empty inventory', async () => {
+    const result = await testConnection(
+      {
+        slug: 'openai-empty',
+        name: 'OpenAI Empty',
+        providerType: 'openai',
+        baseUrl: 'http://127.0.0.1:1/v1',
+        defaultModel: 'gpt-5.5',
+        enabled: false,
+        models: [],
+        modelSource: 'fetched',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      'unused',
+    );
+    assert.deepEqual(result, { ok: false, errorMessage: 'No model to test' });
+  });
+
   test('GitHub Copilot connection probe rejects an account that cannot discover models', async () => {
     const server = await startJsonServer((_request, response) => respondJson(response, 403, {}));
     const result = await testConnection(

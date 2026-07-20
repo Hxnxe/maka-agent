@@ -24,10 +24,12 @@ function resolveConnectionTestModel(
 ): string | undefined {
   const explicitModel = model?.trim();
   if (explicitModel) return explicitModel;
+  const hasAuthoritativeInventory =
+    connection.modelSource === 'fetched' && Array.isArray(connection.models);
   const live =
-    connection.models && connection.models.length > 0
+    hasAuthoritativeInventory || (connection.models && connection.models.length > 0)
       ? new Set(
-          connection.models
+          (connection.models ?? [])
             .map((entry) => (typeof entry.id === 'string' ? entry.id.trim() : ''))
             .filter(Boolean),
         )

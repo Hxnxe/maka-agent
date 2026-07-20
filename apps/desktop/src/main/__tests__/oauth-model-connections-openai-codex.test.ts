@@ -181,6 +181,29 @@ describe('syncOpenAiCodexConnection live discovery behavior', () => {
     assert.equal(saved.enabled, true);
   });
 
+  it('does not revive fallback models after a fetched-empty snapshot and transient failure', async () => {
+    const existing = makeExisting({
+      enabled: false,
+      models: [],
+      modelSource: 'fetched',
+      lastTestStatus: 'error',
+      lastTestMessage: 'No usable models',
+    });
+    const { sync, getSaved } = makeService({
+      existing,
+      token: 'tok',
+      fetchModels: async () => {
+        throw new Error('offline');
+      },
+    });
+    const result = await sync();
+    assert.equal(getSaved(), null);
+    assert.deepEqual(result?.models, []);
+    assert.equal(result?.modelSource, 'fetched');
+    assert.equal(result?.enabled, false);
+    assert.equal(result?.lastTestStatus, 'error');
+  });
+
   it('disables with needs_reauth when /models rejects with 401', async () => {
     const { sync, getSaved } = makeService({
       existing: makeExisting(),

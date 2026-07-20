@@ -422,7 +422,7 @@ export const TurnView = memo(function TurnView(props: {
             attachments={turn.user.attachments}
             onReadAttachmentBytes={props.onReadAttachmentBytes}
             onEditUserMessage={
-              props.onEditUserMessage
+              props.onEditUserMessage && !turn.user.automationOrigin
                 ? () => props.onEditUserMessage?.(turn.turnId)
                 : undefined
             }

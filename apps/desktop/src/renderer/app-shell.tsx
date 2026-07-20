@@ -994,18 +994,15 @@ function AppShellContent({
 
   const {
     beginEditUserMessage,
-    refillRevisionComposer,
+    prepareRevisionSend,
     cancelRevisionDraft,
-    clearRevisionIfSessionLeft,
   } = useStableActions(createAppShellRevisionActions, {
     uiLocale,
     activeIdRef,
     composerRef,
     messages,
-    addPendingTurnAction: turnActionRegistry.addKey,
-    clearPendingTurnAction: turnActionRegistry.clearKey,
+    hasPendingAttachments: () => pendingAttachments.length > 0,
     openSessionInChat,
-    pendingKeyOf,
     refreshMessages,
     refreshSessions,
     setMessages,
@@ -1015,25 +1012,32 @@ function AppShellContent({
     upsertSessionSummary,
   });
 
-  useEffect(() => {
-    clearRevisionIfSessionLeft(activeId);
-    // Refill after this commit's passive-effect flush. That guarantees the
-    // Composer has swapped its per-session draftKey without depending on
-    // parent/child effect traversal order or waiting a visible animation frame.
-    queueMicrotask(refillRevisionComposer);
-  }, [activeId, revisionDraft, clearRevisionIfSessionLeft, refillRevisionComposer]);
-
   async function sendWithAttachments(text: string): Promise<boolean | void> {
     const revision = revisionDraftRef.current;
+    const revisionSend = Boolean(
+      revision && activeIdRef.current === revision.draftSessionId,
+    );
     if (
+      revisionSend &&
       revision &&
-      activeIdRef.current === revision.draftSessionId &&
       text.trim() === revision.originalText.trim() &&
       pendingAttachments.length === 0
     ) {
       const actionCopy = getDesktopConversationCopy(uiLocale).actions;
       toastApi.info(actionCopy.revisionReadyTitle, actionCopy.revisionUnchanged);
       return false;
+    }
+    if (revisionSend && revision) {
+      const actionCopy = getDesktopConversationCopy(uiLocale).actions;
+      if (pendingAttachments.length > 0) {
+        toastApi.info(actionCopy.revisionUnavailableTitle, actionCopy.revisionAttachmentsUnsupported);
+        return false;
+      }
+      if (text.trim() === '/compact') {
+        toastApi.info(actionCopy.revisionUnavailableTitle, actionCopy.revisionCommandUnsupported);
+        return false;
+      }
+      if (!(await prepareRevisionSend(text))) return false;
     }
     if (text.trim() === '/compact') {
       const sessionId = activeIdRef.current;
@@ -1055,9 +1059,15 @@ function AppShellContent({
       }
     }
     const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
+    const expectedRevisionSessionId = revisionSend
+      ? revisionDraftRef.current?.draftSessionId
+      : undefined;
     const ok = await send(text, pending);
     if (ok !== false && pending) clearSubmittedAttachments(pending);
-    if (ok !== false && revision && activeIdRef.current === revision.draftSessionId) {
+    if (ok !== false && revisionSend) {
+      if (expectedRevisionSessionId) {
+        composerRef.current?.clearDraft(expectedRevisionSessionId);
+      }
       commitRevisionDraft(null);
     }
     return ok;
@@ -1683,7 +1693,7 @@ function AppShellContent({
                     ? {
                         message: getDesktopConversationCopy(uiLocale).actions.revisionBanner,
                         cancelLabel: getDesktopConversationCopy(uiLocale).actions.revisionCancelLabel,
-                        onCancel: cancelRevisionDraft,
+                        onCancel: () => { void cancelRevisionDraft(); },
                       }
                     : undefined
                 }
@@ -1691,8 +1701,16 @@ function AppShellContent({
                 onSearchMentionFiles={searchMentionFiles}
                 pendingAttachments={pendingAttachments}
                 onRemoveAttachment={removeAttachment}
-                onPickAttachments={pickAttachments}
-                onAttachFilePaths={attachFilePaths}
+                onPickAttachments={
+                  revisionDraft && activeId === revisionDraft.draftSessionId
+                    ? undefined
+                    : pickAttachments
+                }
+                onAttachFilePaths={
+                  revisionDraft && activeId === revisionDraft.draftSessionId
+                    ? undefined
+                    : attachFilePaths
+                }
                 expertTeams={expertTeams}
                 onStartExpertTeam={handleExpertTeamStart}
                   modelLabel={activeModelLabel ?? newChatModelLabel ?? undefined}

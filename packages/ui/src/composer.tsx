@@ -54,6 +54,10 @@ export interface ComposerHandle {
   setText(text: string): void;
   /** Append a prompt/context fragment after the existing draft instead of replacing it. */
   appendText(text: string): void;
+  /** Read the current uncontrolled textarea value. */
+  getText(): string;
+  /** Clear one persisted draft without affecting a different active session. */
+  clearDraft(draftKey: string): void;
   /** Move focus to the textarea without changing its content. */
   focus(): void;
 }
@@ -297,6 +301,17 @@ export const Composer = forwardRef<
         autoResize();
         focusTextInputAtEnd(el);
       },
+      getText() {
+        return textareaRef.current?.value ?? '';
+      },
+      clearDraft(draftKey: string) {
+        clearDraft(draftKey);
+        if (activeDraftKey() !== draftKey) return;
+        const el = textareaRef.current;
+        if (el) el.value = '';
+        saveCurrentDraft('');
+        autoResize();
+      },
       focus() {
         textareaRef.current?.focus();
       },
@@ -326,6 +341,9 @@ export const Composer = forwardRef<
     // survives page reloads and is shared across all input surfaces.
     rememberSentEntry(text);
     clearDraft(submittedDraftKey);
+    // The owner may have changed while onSend awaited (new-session creation,
+    // revision branch, or user navigation). Never erase a foreign draft.
+    if (activeDraftKey() !== submittedDraftKey) return;
     saveCurrentDraft('');
     form?.reset();
     // form.reset() empties the textarea but doesn't fire input — collapse
@@ -532,6 +550,8 @@ export const Composer = forwardRef<
           <button
             type="button"
             className="maka-composer-no-model-hint-action"
+            disabled={sendPending}
+            aria-busy={sendPending ? 'true' : undefined}
             onClick={() => props.revisionNotice?.onCancel()}
           >
             {props.revisionNotice.cancelLabel}

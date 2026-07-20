@@ -461,6 +461,9 @@ export function ChatView(props: {
                   onFooterAction={stableTurnFooterAction}
                   onEditUserMessage={props.onEditUserMessage ? stableEditUserMessage : undefined}
                   editUserMessageTransformed={transformedUserTurnIds.has(turn.turnId)}
+                  editUserMessageDisabled={
+                    streamingActive || props.activeSession?.status === 'running'
+                  }
                   failedReasonLabel={props.turnFailedReasonLabels?.[turn.turnId]}
                   failedRecoveryLabel={props.turnFailedRecoveryLabels?.[turn.turnId]}
                   safeResumeAction={props.safeResumeAction?.turnId === turn.turnId

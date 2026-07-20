@@ -9,52 +9,56 @@ import {
 } from './session-workspace-errors.js';
 
 type RefBox<T> = { current: T };
-type MessageListUpdater = (next: StoredMessage[] | ((current: StoredMessage[]) => StoredMessage[])) => void;
+type MessageListUpdater = (
+  next: StoredMessage[] | ((current: StoredMessage[]) => StoredMessage[]),
+) => void;
 
 type ToastApi = {
   info(title: string, description?: string): void;
-  success(title: string, description?: string): void;
   error(title: string, description?: string): void;
 };
 
 /** Active edit-and-resend draft owned by the desktop shell. */
 export type TurnRevisionDraft = {
-  /** Session the user clicked edit on (may differ from the new branch after commit prep). */
   sourceSessionId: string;
   sourceTurnId: string;
-  /** Session currently holding the pre-turn context (branch child after prepare). */
+  /** Active owner of the draft. Changes to the branch child after prepare. */
   draftSessionId: string;
   originalText: string;
+  /** Composer text that was present before edit began; restored on cancel. */
+  previousComposerText: string;
 };
 
 export interface AppShellRevisionActions {
-  beginEditUserMessage(turnId: string): Promise<void>;
-  /** Refill only after React has committed the child session's composer key. */
-  refillRevisionComposer(): void;
-  cancelRevisionDraft(): void;
-  /** Clear draft when the user leaves the draft session without sending. */
-  clearRevisionIfSessionLeft(nextSessionId: string | undefined): void;
+  beginEditUserMessage(turnId: string): void;
+  /** Lazily create the before-turn branch immediately before normal send. */
+  prepareRevisionSend(text: string): Promise<boolean>;
+  cancelRevisionDraft(): Promise<void>;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
 
 /**
- * Edit-and-resend = CLI rewind productized for Desktop:
- *   1. Capture the user-facing prompt from the source turn.
- *   2. branchBeforeTurn (non-destructive; original session kept).
- *   3. Switch onto the child and refill the composer for edit + send.
+ * Desktop edit-and-resend follows the CLI rewind boundary without creating an
+ * empty branch at click time:
  *
- * Sending itself reuses the normal send path once the active session is the
- * branch child. Cancel only drops the local draft marker — the empty branch
- * remains as a normal session the user can still use or archive.
+ *   edit click -> local composer draft only
+ *   send       -> branchBeforeTurn -> switch child -> normal send
+ *
+ * If normal send fails after the branch was prepared, the child remains active
+ * with the edited text and a second send retries there instead of branching
+ * again. Attachment-bearing source or retained context is rejected until the
+ * branch artifact copier can preserve those references without data loss.
  */
 export function createAppShellRevisionActions(deps: {
   uiLocale: UiLocale;
   activeIdRef: RefBox<string | undefined>;
   composerRef: RefBox<ComposerHandle | null>;
   messages: readonly StoredMessage[];
-  addPendingTurnAction: (key: string) => boolean;
-  clearPendingTurnAction: (key: string) => void;
+  hasPendingAttachments: () => boolean;
   openSessionInChat: (sessionId: string, turnId?: string) => void;
-  pendingKeyOf: (sessionId: string, turnId: string, actionId: string) => string;
   refreshMessages: (sessionId: string) => Promise<boolean>;
   refreshSessions: () => Promise<SessionSummary[]>;
   setMessages: MessageListUpdater;
@@ -68,10 +72,8 @@ export function createAppShellRevisionActions(deps: {
     activeIdRef,
     composerRef,
     messages,
-    addPendingTurnAction,
-    clearPendingTurnAction,
+    hasPendingAttachments,
     openSessionInChat,
-    pendingKeyOf,
     refreshMessages,
     refreshSessions,
     setMessages,
@@ -82,62 +84,107 @@ export function createAppShellRevisionActions(deps: {
   } = deps;
   const copy = getDesktopConversationCopy(uiLocale).actions;
 
-  async function beginEditUserMessage(turnId: string): Promise<void> {
+  function beginEditUserMessage(turnId: string): void {
     const sessionId = activeIdRef.current;
     if (!sessionId) return;
-    const key = pendingKeyOf(sessionId, turnId, 'edit');
-    if (!addPendingTurnAction(key)) return;
-    try {
-      const userMessage = messages.find(
-        (message): message is Extract<StoredMessage, { type: 'user' }> =>
-          message.type === 'user' && message.turnId === turnId,
-      );
-      if (!userMessage) {
-        toastApi.error(copy.operationFailedTitle, copy.operationFailedFallback);
-        return;
+    const existing = revisionDraftRef.current;
+    if (existing) {
+      if (existing.draftSessionId === sessionId && existing.sourceTurnId === turnId) {
+        composerRef.current?.focus();
+      } else {
+        toastApi.info(copy.revisionUnavailableTitle, copy.revisionAlreadyActive);
       }
-      if (userMessage.attachments && userMessage.attachments.length > 0) {
-        toastApi.info(copy.revisionUnavailableTitle, copy.revisionAttachmentsUnsupported);
-        return;
-      }
-      if (userMessage.displayText !== undefined && userMessage.displayText !== userMessage.text) {
-        toastApi.info(copy.revisionUnavailableTitle, copy.revisionTransformedTextUnsupported);
-        return;
-      }
-      // Prefer human-facing text so skill envelopes never leak into the editor.
-      const prompt = userFacingText(userMessage);
+      return;
+    }
+    if (hasPendingAttachments()) {
+      toastApi.info(copy.revisionUnavailableTitle, copy.revisionDraftAttachmentConflict);
+      return;
+    }
+    const userMessage = messages.find(
+      (message): message is Extract<StoredMessage, { type: 'user' }> =>
+        message.type === 'user' && message.turnId === turnId,
+    );
+    if (!userMessage) {
+      toastApi.error(copy.operationFailedTitle, copy.operationFailedFallback);
+      return;
+    }
 
-      const newSession = await window.maka.sessions.branchBeforeTurn(sessionId, {
-        sourceTurnId: turnId,
+    const turnOrder: string[] = [];
+    const seenTurns = new Set<string>();
+    const turnHasAttachments = new Set<string>();
+    for (const message of messages) {
+      const messageTurnId = (message as { turnId?: string }).turnId;
+      if (messageTurnId && !seenTurns.has(messageTurnId)) {
+        seenTurns.add(messageTurnId);
+        turnOrder.push(messageTurnId);
+      }
+      if (message.type === 'user' && message.attachments && message.attachments.length > 0) {
+        turnHasAttachments.add(message.turnId);
+      }
+    }
+    const sourceIndex = turnOrder.indexOf(turnId);
+    const retainedAttachmentTurn = turnOrder
+      .slice(0, Math.max(0, sourceIndex))
+      .find((candidate) => turnHasAttachments.has(candidate));
+    if (
+      (userMessage.attachments && userMessage.attachments.length > 0) ||
+      retainedAttachmentTurn
+    ) {
+      toastApi.info(copy.revisionUnavailableTitle, copy.revisionAttachmentsUnsupported);
+      return;
+    }
+    if (userMessage.displayText !== undefined && userMessage.displayText !== userMessage.text) {
+      toastApi.info(copy.revisionUnavailableTitle, copy.revisionTransformedTextUnsupported);
+      return;
+    }
+
+    const prompt = userFacingText(userMessage);
+    commitRevisionDraft({
+      sourceSessionId: sessionId,
+      sourceTurnId: turnId,
+      draftSessionId: sessionId,
+      originalText: prompt,
+      previousComposerText: composerRef.current?.getText() ?? '',
+    });
+    composerRef.current?.setText(prompt);
+    composerRef.current?.focus();
+    toastApi.info(copy.revisionStartedTitle, copy.revisionStartedDescription);
+  }
+
+  async function prepareRevisionSend(text: string): Promise<boolean> {
+    const draft = revisionDraftRef.current;
+    if (!draft || activeIdRef.current !== draft.draftSessionId) return false;
+    // A previous attempt already prepared the child; retry normal send there.
+    if (draft.draftSessionId !== draft.sourceSessionId) return true;
+
+    const sourceSessionId = draft.sourceSessionId;
+    try {
+      const newSession = await window.maka.sessions.branchBeforeTurn(sourceSessionId, {
+        sourceTurnId: draft.sourceTurnId,
       });
       upsertSessionSummary(newSession);
-      if (activeIdRef.current !== sessionId) {
-        // User left the source session mid-branch; keep the branch in the list
-        // but do not steal focus or refill a foreign composer.
+      if (activeIdRef.current !== sourceSessionId || revisionDraftRef.current !== draft) {
         await refreshSessions();
-        return;
+        return false;
       }
 
-      const draft: TurnRevisionDraft = {
-        sourceSessionId: sessionId,
-        sourceTurnId: turnId,
-        draftSessionId: newSession.id,
-        originalText: prompt,
-      };
-      // Commit ref + state together so the activeId effect observes the draft
-      // even before React renders the child session.
-      commitRevisionDraft(draft);
+      const prepared = { ...draft, draftSessionId: newSession.id };
+      commitRevisionDraft(prepared);
       openSessionInChat(newSession.id);
       setMessages([]);
       await refreshMessages(newSession.id);
-      // Refresh can outlive a cancel or navigation. Do not announce a stale
-      // revision after the user has already left or dismissed it.
-      if (activeIdRef.current === newSession.id && revisionDraftRef.current === draft) {
-        toastApi.info(copy.revisionReadyTitle, copy.revisionReadyDescription);
+      // Let Composer swap its draftKey before writing into the child draft.
+      await nextAnimationFrame();
+      if (activeIdRef.current !== newSession.id || revisionDraftRef.current !== prepared) {
+        return false;
       }
+      composerRef.current?.setText(text);
+      composerRef.current?.focus();
+      toastApi.info(copy.revisionReadyTitle, copy.revisionReadyDescription);
       await refreshSessions();
+      return true;
     } catch (error) {
-      if (activeIdRef.current !== sessionId) return;
+      if (activeIdRef.current !== sourceSessionId) return false;
       if (isSessionWorkspaceUnavailableError(error)) {
         showSessionWorkspaceUnavailableToast(toastApi, uiLocale);
       } else {
@@ -146,41 +193,30 @@ export function createAppShellRevisionActions(deps: {
           localizedShellErrorMessage(error, copy.operationFailedFallback, uiLocale),
         );
       }
-    } finally {
-      clearPendingTurnAction(key);
+      return false;
     }
   }
 
-  function refillRevisionComposer(): void {
-    const draft = revisionDraftRef.current;
-    if (!draft || activeIdRef.current !== draft.draftSessionId) return;
-    composerRef.current?.setText(draft.originalText);
-    composerRef.current?.focus();
-  }
-
-  function cancelRevisionDraft(): void {
+  async function cancelRevisionDraft(): Promise<void> {
     const draft = revisionDraftRef.current;
     if (!draft) return;
     commitRevisionDraft(null);
-    // Clear only when the user is still on the draft session; otherwise leave
-    // whatever draft they are composing in the destination session alone.
-    if (activeIdRef.current === draft.draftSessionId) {
-      composerRef.current?.setText('');
+    if (draft.draftSessionId !== draft.sourceSessionId) {
+      composerRef.current?.clearDraft(draft.draftSessionId);
+    }
+    if (activeIdRef.current === draft.sourceSessionId) {
+      composerRef.current?.setText(draft.previousComposerText);
+      return;
+    }
+    openSessionInChat(draft.sourceSessionId);
+    setMessages([]);
+    await refreshMessages(draft.sourceSessionId);
+    await nextAnimationFrame();
+    if (activeIdRef.current === draft.sourceSessionId) {
+      composerRef.current?.setText(draft.previousComposerText);
+      composerRef.current?.focus();
     }
   }
 
-  function clearRevisionIfSessionLeft(nextSessionId: string | undefined): void {
-    const draft = revisionDraftRef.current;
-    if (!draft) return;
-    if (nextSessionId !== draft.draftSessionId) {
-      commitRevisionDraft(null);
-    }
-  }
-
-  return {
-    beginEditUserMessage,
-    refillRevisionComposer,
-    cancelRevisionDraft,
-    clearRevisionIfSessionLeft,
-  };
+  return { beginEditUserMessage, prepareRevisionSend, cancelRevisionDraft };
 }

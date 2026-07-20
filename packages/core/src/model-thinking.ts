@@ -101,9 +101,8 @@ export function thinkingOptionsForModel(
 /**
  * Levels a model supports, in display order. Returns an empty list for
  * non-reasoning models and for provider/model combinations whose reasoning
- * support is not declarable from `providerType` + `modelId` alone (e.g.
- * `openai-compatible`, where the backing model is user-configured and
- * unknown). The UI hides the thinking switcher when this returns `[]`.
+ * support is not declarable from `providerType` + `modelId` alone. The UI
+ * hides the thinking switcher when this returns `[]`.
  *
  * Heuristics are intentionally conservative: only patterns known to accept the
  * mapped provider option are listed. Refine here as provider support grows —
@@ -113,5 +112,9 @@ export function thinkingVariantsForModel(
   providerType: ProviderType,
   modelId: string,
 ): readonly ThinkingLevel[] {
-  return deriveThinkingChoices(thinkingOptionsForModel(providerType, modelId));
+  const declared = deriveThinkingChoices(thinkingOptionsForModel(providerType, modelId));
+  if (declared.length > 0) return declared;
+  // Metadata can mark reasoning without a controllable effort wire. Only
+  // surface a menu when we have declared efforts/offBehavior above.
+  return [];
 }

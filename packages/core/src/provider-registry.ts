@@ -736,11 +736,12 @@ const providerRegistry = {
   },
   moonshot: {
     label: 'Moonshot',
-    description: 'Moonshot Kimi API key access.',
+    description:
+      'Moonshot Kimi API key access. Default endpoint stays on the China platform for existing keys; global keys can set https://api.moonshot.ai/v1.',
     baseUrl: 'https://api.moonshot.cn/v1',
     authKind: 'api_key',
     backendKind: 'ai-sdk',
-    fallbackModels: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    fallbackModels: ['kimi-k2.6', 'kimi-k2.5', 'kimi-k2.7-code', 'kimi-k2-thinking'],
     status: 'ready',
     protocol: 'openai',
     runtimeAdapter: { kind: 'openai-compatible', name: 'provider' },

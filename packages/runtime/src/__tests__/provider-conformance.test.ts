@@ -375,6 +375,7 @@ describe('models.dev provider conformance', () => {
       providerType: 'opencode',
       baseUrl: `${server.url}/zen/v1`,
       defaultModel: 'gpt-5.5',
+      models: [{ id: 'gpt-5.5' }],
       enabled: true,
       createdAt: 1,
       updatedAt: 1,

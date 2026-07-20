@@ -89,6 +89,10 @@ test('sync-model-metadata maps models.dev modalities into Maka metadata', async 
             id: 'vision-model',
             name: 'Vision Model',
             reasoning: true,
+            reasoning_options: [
+              { type: 'toggle' },
+              { type: 'effort', values: ['none', 'low', 'high'] },
+            ],
             tool_call: true,
             modalities: { input: ['text', 'image'], output: ['text'] },
             limit: { context: 128_000, output: 16_000 },
@@ -97,6 +101,7 @@ test('sync-model-metadata maps models.dev modalities into Maka metadata', async 
             id: 'text-model',
             name: 'Text Model',
             reasoning: false,
+            reasoning_options: [{ type: 'budget_tokens', min: 1_024 }],
             tool_call: false,
             modalities: { input: ['text'], output: ['text'] },
             limit: { context: 32_000, output: 4_000 },
@@ -124,6 +129,8 @@ test('sync-model-metadata maps models.dev modalities into Maka metadata', async 
 
   const generated = await readFile(output, 'utf8');
   assert.match(generated, /"vision":true,"reasoning":true,"functionCalling":true/);
+  assert.match(generated, /"thinkingOptions":\{"efforts":\["none","low","high"\],"toggle":true\}/);
+  assert.doesNotMatch(generated, /"text-model".*"thinkingOptions"/);
   assert.match(generated, /"text-model".*"lifecycle":"deprecated".*"vision":false/);
   assert.match(
     generated,

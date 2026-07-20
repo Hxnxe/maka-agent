@@ -410,12 +410,24 @@ export function buildProviderOptions(
     case 'groq':
     case 'deepseek':
     case 'moonshot':
+    case 'xai':
     case 'tencent-token-plan':
     case 'zai-coding-plan':
     case 'stepfun-step-plan':
     case 'stepfun-ai-step-plan':
       return level && level !== 'off'
         ? { [openaiCompatibleNamespace(connection.providerType)]: { reasoningEffort: level } }
+        : {};
+    case 'openai-compatible':
+      // createOpenAICompatible uses the connection slug as the providerOptions
+      // namespace when runtimeAdapter.name === 'connection'. Models that declare
+      // effort `none` surface as `off` and must send reasoningEffort: 'none'.
+      return level
+        ? {
+            [connection.slug]: {
+              reasoningEffort: level === 'off' ? 'none' : level,
+            },
+          }
         : {};
     default:
       return {};

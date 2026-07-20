@@ -341,9 +341,62 @@ describe('thinkingVariantsForModel', () => {
 
   test('providers without metadata yield none (miss → no menu)', () => {
     assert.deepEqual([...thinkingVariantsForModel('ollama', 'llama3')], []);
-    assert.deepEqual([...thinkingVariantsForModel('openai-compatible', 'some-model')], []);
     assert.deepEqual([...thinkingVariantsForModel('gemini-cli', 'gemini-2.5-pro')], []);
     assert.deepEqual([...thinkingVariantsForModel('moonshot', 'kimi-k2')], []);
+  });
+
+  test('unknown custom openai-compatible models do not expose an unsafe effort knob', () => {
+    assert.deepEqual([...thinkingVariantsForModel('openai-compatible', 'some-model')], []);
+  });
+
+  test('known custom openai-compatible gateway models keep provider-native efforts', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('openai-compatible', 'gpt-5.5')],
+      ['off', 'low', 'medium', 'high', 'xhigh'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('openai-compatible', 'gpt-5.6-sol')],
+      ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+    );
+  });
+
+  test('moonshot reasoning models expose low/medium/high efforts', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('moonshot', 'kimi-k2.6')],
+      ['low', 'medium', 'high'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('moonshot', 'kimi-k2-thinking')],
+      ['low', 'medium', 'high'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('moonshot', 'kimi-k3')],
+      ['low', 'medium', 'high', 'max'],
+    );
+    assert.deepEqual([...thinkingVariantsForModel('moonshot', 'kimi-k2-turbo-preview')], []);
+  });
+
+  test('xai grok-4.5 exposes low/medium/high efforts', () => {
+    assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.5')], ['low', 'medium', 'high']);
+  });
+
+  test('anthropic gateway aliases expose effort menus', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('anthropic', 'claude-opus-4-6')],
+      ['low', 'medium', 'high', 'xhigh', 'max'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('anthropic', 'b-claude-opus-4.8')],
+      ['low', 'medium', 'high', 'xhigh', 'max'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('anthropic', 'glm-5.2')],
+      ['low', 'medium', 'high', 'max'],
+    );
+    assert.deepEqual(
+      [...thinkingVariantsForModel('anthropic', 'deepseek-v4-pro')],
+      ['high', 'xhigh', 'max'],
+    );
   });
 });
 

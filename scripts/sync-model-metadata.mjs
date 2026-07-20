@@ -114,6 +114,39 @@ function toModelProviderOverride(providerId, modelId, override) {
   };
 }
 
+function toThinkingOptions(providerId, modelId, options) {
+  if (options === undefined) return undefined;
+  if (!Array.isArray(options)) {
+    throw new Error(`models.dev model ${providerId}/${modelId} reasoning_options must be an array`);
+  }
+  const efforts = [];
+  let toggle = false;
+  for (const option of options) {
+    if (!option || typeof option !== 'object' || typeof option.type !== 'string') {
+      throw new Error(`models.dev model ${providerId}/${modelId} has an invalid reasoning option`);
+    }
+    if (option.type === 'effort') {
+      if (!Array.isArray(option.values) || option.values.some((value) => typeof value !== 'string')) {
+        throw new Error(`models.dev model ${providerId}/${modelId} has invalid effort values`);
+      }
+      for (const value of option.values) {
+        if (!efforts.includes(value)) efforts.push(value);
+      }
+    } else if (option.type === 'toggle') {
+      toggle = true;
+    } else if (option.type !== 'budget_tokens') {
+      throw new Error(
+        `models.dev model ${providerId}/${modelId} has unsupported reasoning option ${option.type}`,
+      );
+    }
+  }
+  if (efforts.length === 0 && !toggle) return undefined;
+  return {
+    ...(efforts.length > 0 ? { efforts } : {}),
+    ...(toggle ? { toggle: true } : {}),
+  };
+}
+
 function toMetadata(providerId, modelId, provider, model) {
   if (
     typeof provider.doc !== 'string' ||
@@ -126,6 +159,11 @@ function toMetadata(providerId, modelId, provider, model) {
   ) {
     throw new Error(`models.dev model ${providerId}/${modelId} has an unsupported shape`);
   }
+  const thinkingOptions = toThinkingOptions(
+    providerId,
+    modelId,
+    model.reasoning_options,
+  );
   return {
     displayName: model.name,
     lifecycle: model.status === 'deprecated' ? 'deprecated' : 'active',
@@ -137,6 +175,7 @@ function toMetadata(providerId, modelId, provider, model) {
       reasoning: model.reasoning === true,
       functionCalling: model.tool_call === true,
     },
+    ...(thinkingOptions ? { thinkingOptions } : {}),
   };
 }
 

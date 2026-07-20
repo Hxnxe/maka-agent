@@ -1,5 +1,6 @@
 import {
   PROVIDER_DEFAULTS,
+  connectionEnabledModelIds,
   type ConnectionTestResult,
   type LlmConnection,
 } from '@maka/core/llm-connections';
@@ -10,6 +11,42 @@ import { claudeSubscriptionHeaders } from './subscription-auth.js';
 import { fetchGitHubCopilotModels } from './model-fetcher.js';
 
 const CONNECTION_TEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Prefer an explicit model, then a still-live default/enabled id, then
+ * provider fallbacks. When `connection.models` is populated (post-fetch),
+ * skip retired ids such as moonshot-v1-* so the probe hits a real model.
+ */
+function resolveConnectionTestModel(
+  connection: LlmConnection,
+  model: string | undefined,
+  fallbackModels: readonly string[],
+): string | undefined {
+  const explicitModel = model?.trim();
+  if (explicitModel) return explicitModel;
+  const live =
+    connection.models && connection.models.length > 0
+      ? new Set(
+          connection.models
+            .map((entry) => (typeof entry.id === 'string' ? entry.id.trim() : ''))
+            .filter(Boolean),
+        )
+      : null;
+  const candidates = [
+    connection.defaultModel,
+    ...connectionEnabledModelIds(connection),
+    ...fallbackModels,
+    ...(live ? [...live] : []),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const id = candidate.trim();
+    if (!id) continue;
+    if (live && !live.has(id)) continue;
+    return id;
+  }
+  return undefined;
+}
 
 export async function testConnection(
   connection: LlmConnection,
@@ -25,7 +62,7 @@ export async function testConnection(
   }
   const auth = defaults.authKind;
   const secret = auth === 'none' ? '' : apiKey;
-  const testModel = model || connection.defaultModel || defaults.fallbackModels[0];
+  const testModel = resolveConnectionTestModel(connection, model, defaults.fallbackModels);
 
   if (!testModel) {
     return { ok: false, errorMessage: 'No model to test' };

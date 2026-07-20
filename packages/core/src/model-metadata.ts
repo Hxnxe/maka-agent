@@ -96,7 +96,12 @@ const REASONING_FUNCTION_CALLING = {
 
 const ANTHROPIC_MODEL_OVERRIDES: Record<string, ModelMetadata> = {
   'claude-sonnet-4-6': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'max'] } },
+  'claude-opus-4-6': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'xhigh', 'max'] } },
   'claude-opus-4-8': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'xhigh', 'max'] } },
+  // Gateway aliases used by custom Anthropic-compatible endpoints.
+  'b-claude-opus-4.8': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'xhigh', 'max'] } },
+  'glm-5.2': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'max'] } },
+  'deepseek-v4-pro': { thinkingOptions: { efforts: ['high', 'xhigh', 'max'] } },
   'claude-fable-5': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'xhigh', 'max'] } },
   // Anthropic retired Sonnet 4.5's 1M beta on 2026-04-30; the standard API limit is 200K.
   'claude-sonnet-4-5': {
@@ -270,6 +275,30 @@ const STATIC_MODEL_METADATA: Partial<Record<ProviderType, Record<string, ModelMe
     hy3: { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
     'hy3-preview': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
   },
+  moonshot: {
+    'kimi-k3': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'max'] } },
+    'kimi-k2.5': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2.6': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2.7-code': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2.7-code-highspeed': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2-thinking': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2-thinking-turbo': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+  },
+  xai: {
+    'grok-4.5': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+  },
+  'openai-compatible': {
+    // Known gateway models keep provider-native effort ranges even on custom endpoints.
+    'gpt-5.5': { thinkingOptions: { efforts: ['none', 'low', 'medium', 'high', 'xhigh'] } },
+    'gpt-5.6-sol': {
+      thinkingOptions: { efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] },
+    },
+    'kimi-k3': { thinkingOptions: { efforts: ['low', 'medium', 'high', 'max'] } },
+    'kimi-k2.7-code': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2.7-code-highspeed': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'kimi-k2.6': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+    'grok-4.5': { thinkingOptions: { efforts: ['low', 'medium', 'high'] } },
+  },
   deepinfra: {
     'moonshotai/Kimi-K2.7-Code': {
       thinkingOptions: { efforts: ['none', 'low', 'medium', 'high'], toggle: true },
@@ -394,6 +423,7 @@ const CURATED_CATALOG_FALLBACK_MODELS: Partial<Record<ProviderType, readonly str
   ],
   openai: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5'],
   deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-reasoner', 'deepseek-chat'],
+  moonshot: ['kimi-k3', 'kimi-k2.6', 'kimi-k2.5', 'kimi-k2.7-code', 'kimi-k2-thinking'],
   google: ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
   'gemini-cli': [
     'gemini-3.5-flash',

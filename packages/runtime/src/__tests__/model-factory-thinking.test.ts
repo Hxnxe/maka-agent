@@ -155,6 +155,54 @@ describe('buildProviderOptions: thinking level', () => {
     assert.deepEqual(buildProviderOptions(conn('deepseek'), 'deepseek-chat', 'high'), {});
   });
 
+  test('moonshot reasoning models send reasoningEffort under the moonshot namespace', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('moonshot', 'kimi-k2.6')],
+      ['low', 'medium', 'high'],
+    );
+    assert.deepEqual(buildProviderOptions(conn('moonshot'), 'kimi-k2.6', 'high'), {
+      moonshot: { reasoningEffort: 'high' },
+    });
+    assert.deepEqual(buildProviderOptions(conn('moonshot'), 'kimi-k2.6', 'off'), {});
+    assert.deepEqual(
+      [...thinkingVariantsForModel('moonshot', 'kimi-k3')],
+      ['low', 'medium', 'high', 'max'],
+    );
+    assert.deepEqual(buildProviderOptions(conn('moonshot'), 'kimi-k3', 'max'), {
+      moonshot: { reasoningEffort: 'max' },
+    });
+  });
+
+  test('xai grok-4.5 sends reasoningEffort under the xai namespace', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('xai', 'grok-4.5')],
+      ['low', 'medium', 'high'],
+    );
+    assert.deepEqual(buildProviderOptions(conn('xai'), 'grok-4.5', 'high'), {
+      xai: { reasoningEffort: 'high' },
+    });
+    assert.deepEqual(buildProviderOptions(conn('xai'), 'grok-4.5', 'off'), {});
+  });
+
+  test('openai-compatible drops unknown efforts and sends known models under the connection slug', () => {
+    assert.deepEqual(
+      [...thinkingVariantsForModel('openai-compatible', 'my-proxy-model')],
+      [],
+    );
+    assert.deepEqual(
+      buildProviderOptions(conn('openai-compatible', 'custom-proxy'), 'my-proxy-model', 'medium'),
+      {},
+    );
+    assert.deepEqual(
+      buildProviderOptions(conn('openai-compatible', 'droid-ib-do-openai'), 'gpt-5.5', 'xhigh'),
+      { 'droid-ib-do-openai': { reasoningEffort: 'xhigh' } },
+    );
+    assert.deepEqual(
+      buildProviderOptions(conn('openai-compatible', 'droid-ib-do-openai'), 'gpt-5.5', 'off'),
+      { 'droid-ib-do-openai': { reasoningEffort: 'none' } },
+    );
+  });
+
   test('Cloudflare Workers AI sends Kimi K2.6 reasoning effort and its real thinking-off wire', () => {
     const modelId = '@cf/moonshotai/kimi-k2.6';
     assert.deepEqual(
@@ -370,6 +418,8 @@ describe('buildProviderOptions: resolver/options drift guard', () => {
     { providerType: 'google', model: 'gemini-3-pro-preview' },
     { providerType: 'google', model: 'gemini-3.5-flash' },
     { providerType: 'deepseek', model: 'deepseek-v4-flash' },
+    { providerType: 'xai', model: 'grok-4.5' },
+    { providerType: 'moonshot', model: 'kimi-k3' },
     { providerType: 'deepinfra', model: 'moonshotai/Kimi-K2.7-Code' },
     { providerType: 'groq', model: 'openai/gpt-oss-120b' },
     { providerType: 'openrouter', model: 'openai/gpt-5.6-sol' },

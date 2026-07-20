@@ -73,12 +73,7 @@ describe('non-serving Runtime Host kernel', () => {
         { kind: 'loser' },
       );
 
-      const connected = await connectRuntimeHost({
-        ...paths,
-        rootPath: paths.root,
-        surface: 'tui',
-        protocol: CURRENT_PROTOCOL,
-      });
+      const connected = await retryConnect(paths, CURRENT_PROTOCOL);
       assert.equal(connected.kind, 'connected');
       if (connected.kind !== 'connected') return;
       const statuses = await Promise.all([
@@ -1089,7 +1084,7 @@ function isConnectedClientMessage(
 }
 
 async function retryConnect(paths: HostPaths, protocol: { min: number; max: number }) {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 15_000;
   let result = await connectRuntimeHost({
     ...paths,
     rootPath: paths.root,

@@ -21,3 +21,6 @@ deepseek.key
 
 # Generated cua-driver release artifact; provenance metadata stays tracked.
 apps/desktop/resources/bin/
+
+# Local desktop packaging output.
+release/

@@ -59,7 +59,8 @@
     "e2e:computer-use-real-ax-anthropic-multi-step": "MAKA_CU_MODEL_PROVIDER=anthropic MAKA_CU_AX_MODEL_SCENARIO=ax-multi-step node scripts/cu-real-ax-model-e2e-launcher.mjs",
     "e2e:computer-use-function-model": "node scripts/cu-real-function-model-e2e.mjs",
     "e2e:computer-use-real-anthropic": "node scripts/cu-real-anthropic-model-e2e.mjs",
-    "e2e:computer-use-real-runtime": "node scripts/cu-real-runtime-model-e2e.mjs"
+    "e2e:computer-use-real-runtime": "node scripts/cu-real-runtime-model-e2e.mjs",
+    "package:desktop": "node scripts/package-desktop-app.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

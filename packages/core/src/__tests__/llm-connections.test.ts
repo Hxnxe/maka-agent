@@ -1462,6 +1462,16 @@ describe('provider URL defaults', () => {
       'https://www.kimi.com/code/console',
     );
     assert.equal(PROVIDER_DEFAULTS.moonshot.baseUrl, 'https://api.moonshot.cn/v1');
+    assert.equal(PROVIDER_DEFAULTS.moonshot.modelsDevId, 'moonshotai-cn');
+    assert.deepEqual(PROVIDER_DEFAULTS.moonshot.fallbackModels.slice(0, 2), [
+      'kimi-k2.6',
+      'kimi-k2.7-code',
+    ]);
+    assert.ok(PROVIDER_DEFAULTS.moonshot.fallbackModels.includes('kimi-k2.5'));
+    assert.equal(
+      PROVIDER_DEFAULTS.moonshot.fallbackModels.some((id) => id.startsWith('moonshot-v1-')),
+      false,
+    );
     assert.equal(
       PROVIDER_DEFAULTS.moonshot.signupUrl,
       'https://platform.kimi.com/console/api-keys',

@@ -39,6 +39,7 @@ import type { OnboardingSnapshot } from '../preload/bridge-contract.js';
 import { ProviderLogo } from './settings/provider-display';
 import { ProviderBrandMark } from './settings/provider-brand-marks';
 import { getShellCopy, localizedShellErrorMessage } from './locales/shell-copy';
+import { getDesktopConversationCopy } from './locales/conversation-copy';
 import { ErrorBoundary } from './error-boundary';
 import { useShellAppearance } from './use-shell-appearance';
 import { useShellSearch } from './use-shell-search';
@@ -68,6 +69,10 @@ import { createAppShellSessionEventHandlers } from './app-shell-session-events';
 import { createAppShellVisualSmokeActions } from './app-shell-visual-smoke';
 import { createAppShellChatActions } from './app-shell-chat-actions';
 import { createAppShellTurnActions } from './app-shell-turn-actions';
+import {
+  createAppShellRevisionActions,
+  type TurnRevisionDraft,
+} from './app-shell-revision-actions';
 import { createAppShellLayoutActions } from './app-shell-layout-actions';
 import { createAppShellQuickChatActions } from './app-shell-quick-chat-actions';
 import { createAppShellDailyReviewActions } from './app-shell-daily-review-actions';
@@ -270,6 +275,12 @@ function AppShellContent({
   const [paletteOpen, openPalette, closePalette] = useCommandPalette();
   const [viewMode, setViewMode] = useState<SessionViewMode>('status');
   const composerRef = useRef<ComposerHandle>(null);
+  const [revisionDraft, setRevisionDraft] = useState<TurnRevisionDraft | null>(null);
+  const revisionDraftRef = useRef<TurnRevisionDraft | null>(null);
+  const commitRevisionDraft = useCallback((draft: TurnRevisionDraft | null) => {
+    revisionDraftRef.current = draft;
+    setRevisionDraft(draft);
+  }, []);
   const {
     resumePendingSessionId,
     resumeParkDescriptionBySession,
@@ -410,7 +421,7 @@ function AppShellContent({
   const sessionRowActionRegistry = useKeyedPendingRegistry();
   const permissionModeChangeRegistry = useKeyedPendingRegistry();
   const sessionModelChangeRegistry = useKeyedPendingRegistry();
-  const pendingKeyOf = (sessionId: string, turnId: string, actionId: TurnFooterActionMeta['id']) =>
+  const pendingKeyOf = (sessionId: string, turnId: string, actionId: string) =>
     `${sessionId}:${turnId}:${actionId}`;
   function omitSessionKey<T>(current: Record<string, T>, sessionId: string): Record<string, T> {
     if (!(sessionId in current)) return current;
@@ -899,7 +910,49 @@ function AppShellContent({
     upsertSessionSummary,
   });
 
+  const {
+    beginEditUserMessage,
+    refillRevisionComposer,
+    cancelRevisionDraft,
+    clearRevisionIfSessionLeft,
+  } = useStableActions(createAppShellRevisionActions, {
+    uiLocale,
+    activeIdRef,
+    composerRef,
+    messages,
+    addPendingTurnAction: turnActionRegistry.addKey,
+    clearPendingTurnAction: turnActionRegistry.clearKey,
+    openSessionInChat,
+    pendingKeyOf,
+    refreshMessages,
+    refreshSessions,
+    setMessages,
+    commitRevisionDraft,
+    revisionDraftRef,
+    toastApi,
+    upsertSessionSummary,
+  });
+
+  useEffect(() => {
+    clearRevisionIfSessionLeft(activeId);
+    // Refill after this commit's passive-effect flush. That guarantees the
+    // Composer has swapped its per-session draftKey without depending on
+    // parent/child effect traversal order or waiting a visible animation frame.
+    queueMicrotask(refillRevisionComposer);
+  }, [activeId, revisionDraft, clearRevisionIfSessionLeft, refillRevisionComposer]);
+
   async function sendWithAttachments(text: string): Promise<boolean | void> {
+    const revision = revisionDraftRef.current;
+    if (
+      revision &&
+      activeIdRef.current === revision.draftSessionId &&
+      text.trim() === revision.originalText.trim() &&
+      pendingAttachments.length === 0
+    ) {
+      const actionCopy = getDesktopConversationCopy(uiLocale).actions;
+      toastApi.info(actionCopy.revisionReadyTitle, actionCopy.revisionUnchanged);
+      return false;
+    }
     if (text.trim() === '/compact') {
       const sessionId = activeIdRef.current;
       if (!sessionId) return true;
@@ -922,6 +975,9 @@ function AppShellContent({
     const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
     const ok = await send(text, pending);
     if (ok !== false && pending) clearSubmittedAttachments(pending);
+    if (ok !== false && revision && activeIdRef.current === revision.draftSessionId) {
+      commitRevisionDraft(null);
+    }
     return ok;
   }
 
@@ -1436,6 +1492,7 @@ function AppShellContent({
                 onRetryMessages={activeId ? () => void retryMessages(activeId) : undefined}
                 turnFooterActionsByTurn={turnFooterActionsByTurn}
                 onTurnFooterAction={handleTurnFooterAction}
+                onEditUserMessage={(turnId) => { void beginEditUserMessage(turnId); }}
                 turnFailedReasonLabels={turnFailedReasonLabels}
                 turnFailedRecoveryLabels={turnFailedRecoveryLabels}
                 safeResumeAction={activeId && resumeCandidateTurnId ? {
@@ -1525,6 +1582,15 @@ function AppShellContent({
                 continuing={showContinuingIndicator && !activeStreamingLive}
                 onSend={sendWithAttachments}
                 onStop={stop}
+                revisionNotice={
+                  revisionDraft && activeId === revisionDraft.draftSessionId
+                    ? {
+                        message: getDesktopConversationCopy(uiLocale).actions.revisionBanner,
+                        cancelLabel: getDesktopConversationCopy(uiLocale).actions.revisionCancelLabel,
+                        onCancel: cancelRevisionDraft,
+                      }
+                    : undefined
+                }
                 mentionSkills={mentionSkills}
                 onSearchMentionFiles={searchMentionFiles}
                 pendingAttachments={pendingAttachments}

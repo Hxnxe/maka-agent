@@ -53,14 +53,14 @@ describe('runtime resume desktop routing contract', () => {
     assert.doesNotMatch(resume, /workspace|tool|background|checkpoint/i);
   });
 
-  it('startup recovery auto-continues only behind the safe-boundary feature flag', async () => {
+  it('startup recovery auto-continues unless explicitly disabled via safe-boundary feature flag', async () => {
     // R6: recoverInterruptedSessionsOnStartup moved to app-lifecycle.ts (nested
     // in wireAppLifecycle), so read the combined source and tolerate the now
     // in-function indented block closer.
     const main = await readMainProcessCombinedSource();
     const recovery = main.match(/async function recoverInterruptedSessionsOnStartup\(\): Promise<void> \{[\s\S]*?\n  \}/)?.[0] ?? '';
 
-    assert.match(recovery, /MAKA_RUNTIME_SAFE_BOUNDARY_RESUME !== '1'/);
+    assert.match(recovery, /MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '0'/);
     assert.match(recovery, /runtime\.planLatestAuthoritativeSafeBoundaryContinuation\(session\.id\)/);
     assert.match(recovery, /runtime\.resumeSafeBoundaryContinuation\(plan\.continuation\)/);
     assert.match(recovery, /streamEvents\(session\.id, iterator, \{/);

@@ -115,7 +115,7 @@ export function wireAppLifecycle(deps: AppLifecycleDeps): void {
   async function recoverInterruptedSessionsOnStartup(): Promise<void> {
     try {
       await runtime.recoverInterruptedSessions();
-      if (process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME !== '1') return;
+      if (process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '0') return;
       for (const session of await runtime.listSessions()) {
         const plan = await runtime.planLatestAuthoritativeSafeBoundaryContinuation(session.id);
         if (!plan.continuation) continue;

@@ -717,7 +717,11 @@ const runtime = new SessionManager({
   shellRuns,
   backends,
   childTools: childAgentTools,
-  safeBoundaryResumeEnabled: process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME === '1',
+  // Safe-boundary resume is enabled by default in the desktop app: an
+  // interrupted turn (app restart, crash) should be recoverable without
+  // requiring an env var. The env var still works as an explicit opt-out
+  // (set to '0' to disable).
+  safeBoundaryResumeEnabled: process.env.MAKA_RUNTIME_SAFE_BOUNDARY_RESUME !== '0',
   onContinuationLifecycleEvent: (event) => {
     console.info('[runtime-resume]', JSON.stringify(event));
   },

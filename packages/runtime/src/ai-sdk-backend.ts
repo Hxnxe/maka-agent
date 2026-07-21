@@ -66,6 +66,7 @@ import type { LlmConnection } from '@maka/core/llm-connections';
 import type { RuntimeEvent } from '@maka/core/runtime-event';
 import type { ToolPermissionRule } from '@maka/core/permission';
 import type { UserQuestionResponse } from '@maka/core/user-question';
+import type { PlanToolResult } from './plan-tools.js';
 import type { AttachmentByteReader } from '@maka/core/attachments';
 import {
   MAX_PROVIDER_IMAGE_REQUEST_BYTES,
@@ -84,6 +85,7 @@ import { PermissionEngine } from './permission-engine.js';
 import {
   AiSdkAutoApprovalReviewer,
   ApprovalCoordinator,
+  type AutoApprovalReviewContext,
   type AutoApprovalReviewer,
 } from './approval-reviewer.js';
 import { AsyncEventQueue } from './async-queue.js';
@@ -132,6 +134,12 @@ import {
 } from './ai-sdk-compaction.js';
 import type { ToolArtifactRecorder } from './tool-artifacts.js';
 import { RunTrace, type RunTraceRecorder } from './run-trace.js';
+import {
+  toSandboxRunTraceProjection,
+  type SandboxDiagnosticCapability,
+  type SandboxDiagnosticsSnapshot,
+} from './sandbox/diagnostics.js';
+import { renderSandboxTurnTailPrompt } from './system-prompt/sandbox-context-prompt.js';
 import { computeCost } from './telemetry/cost.js';
 import { getBuiltinPricing } from './telemetry/builtin-pricing.js';
 import {
@@ -277,6 +285,32 @@ function joinPromptFragments(fragments: readonly (string | undefined)[]): string
     .filter((fragment): fragment is string => Boolean(fragment))
     .join('\n\n');
   return joined.length > 0 ? joined : undefined;
+}
+
+function autoApprovalSandboxContext(
+  snapshot: SandboxDiagnosticsSnapshot,
+): NonNullable<AutoApprovalReviewContext['sandbox']> {
+  const { command, filesystem } = snapshot.capabilities;
+  return {
+    platform: snapshot.platform,
+    profileName: snapshot.profile.name,
+    fileSystem: snapshot.profile.fileSystem,
+    network: snapshot.profile.network,
+    commandSandbox: formatSandboxCapability(command),
+    filesystemSandbox: formatSandboxCapability(filesystem),
+    ...(command.selectionReason ? { commandSandboxSelectionReason: command.selectionReason } : {}),
+    ...(filesystem.selectionReason
+      ? { filesystemSandboxSelectionReason: filesystem.selectionReason }
+      : {}),
+    ...(command.failure ? { commandSandboxFailureReason: command.failure.reason } : {}),
+    ...(filesystem.failure ? { filesystemSandboxFailureReason: filesystem.failure.reason } : {}),
+  };
+}
+
+function formatSandboxCapability(capability: SandboxDiagnosticCapability): string {
+  return capability.backend === 'none'
+    ? capability.status
+    : `${capability.status} (${capability.backend})`;
 }
 
 // ============================================================================
@@ -427,6 +461,16 @@ export interface AiSdkBackendInput {
   /** Canonical-named tools available this session. Backend wraps each with
    *  permission gating before passing to ai-sdk. */
   tools: MakaTool[];
+  /** Active profile and enforcement capability snapshot for this session backend. */
+  sandboxDiagnosticsSnapshot?: SandboxDiagnosticsSnapshot;
+  /** Diagnostic-only Plan Mode/execution identity snapshot. */
+  planTraceContext?: {
+    mode: 'agent' | 'plan';
+    storeVersion: number;
+    planId?: string;
+    proposalId?: string;
+    executionId?: string;
+  };
   /** Trusted identity for expert-team lead/member collaboration tools. */
   agentTeam?: AgentTeamExecutionContext;
   /**
@@ -620,6 +664,7 @@ export class AiSdkBackend implements AgentBackend {
   private abortController: AbortController | null = null;
   private currentTurnId: string | null = null;
   private stopAfterStepRequested = false;
+  private handoffStopReason: CompleteEvent['stopReason'] | undefined;
   private currentInvocationId: string | null = null;
   /**
    * User messages steered into the running turn, drained from the caller's
@@ -745,6 +790,9 @@ export class AiSdkBackend implements AgentBackend {
       }),
       getAutoApprovalReviewContext: () => ({
         ...(this.currentUserIntent !== undefined ? { userIntent: this.currentUserIntent } : {}),
+        ...(input.sandboxDiagnosticsSnapshot
+          ? { sandbox: autoApprovalSandboxContext(input.sandboxDiagnosticsSnapshot) }
+          : {}),
       }),
     });
   }
@@ -880,6 +928,21 @@ export class AiSdkBackend implements AgentBackend {
     });
     this.currentRunTrace = trace;
     trace.turnStarted();
+    if (this.input.planTraceContext) {
+      trace.emit('plan', 'plan_context_resolved', 'Plan context resolved', {
+        ...this.input.planTraceContext,
+      });
+      if (this.input.planTraceContext.executionId) {
+        trace.emit('plan', 'plan_execution_started', 'Plan execution turn started', {
+          ...this.input.planTraceContext,
+        });
+      }
+    }
+    if (this.input.sandboxDiagnosticsSnapshot) {
+      trace.sandboxContextResolved(
+        toSandboxRunTraceProjection(this.input.sandboxDiagnosticsSnapshot),
+      );
+    }
     const recordProviderRequestCapture = this.input.recordProviderRequestCapture;
     const providerRequestTraceId = recordProviderRequestCapture ? this.newId() : undefined;
     const providerRequestTracker = providerRequestTraceId
@@ -959,6 +1022,9 @@ export class AiSdkBackend implements AgentBackend {
           const output = await execute(args, context);
           const providerError = providerToolError(output);
           if (providerError) throw new Error(providerError);
+          if (isPlanToolResult(output)) {
+            this.handlePlanToolResult(output, turnId, queue);
+          }
           return output;
         },
         toModelOutput:
@@ -1023,6 +1089,9 @@ export class AiSdkBackend implements AgentBackend {
           : joinPromptFragments([
               await this.resolveTurnTailPrompt(),
               await this.resolveShellRunContextSummary(),
+              this.input.sandboxDiagnosticsSnapshot
+                ? renderSandboxTurnTailPrompt(this.input.sandboxDiagnosticsSnapshot)
+                : undefined,
             ]);
         const currentUserContent = input.continuation
           ? undefined
@@ -1735,9 +1804,10 @@ export class AiSdkBackend implements AgentBackend {
         // win even when it arrives during post-stream usage persistence.
         if (this.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
         const stopReason =
-          this.maxSteps !== undefined && finishReason === 'tool-calls'
+          this.handoffStopReason ??
+          (this.maxSteps !== undefined && finishReason === 'tool-calls'
             ? 'step_limit'
-            : this.mapFinishReason(finishReason);
+            : this.mapFinishReason(finishReason));
         trace.modelStreamCompleted(stopReason);
         queue.push({
           type: 'complete',
@@ -1887,6 +1957,49 @@ export class AiSdkBackend implements AgentBackend {
 
   private wrapToolExecute(tool: MakaTool, turnId: string, queue: AsyncEventQueue<SessionEvent>) {
     return this.toolRuntime.wrapToolExecute(tool, turnId, queue);
+  }
+
+  private handlePlanToolResult(
+    result: PlanToolResult,
+    turnId: string,
+    queue: AsyncEventQueue<SessionEvent>,
+  ): void {
+    if (result.kind === 'plan_submitted') {
+      const proposal = result.proposal;
+      queue.push({
+        type: 'plan_submitted',
+        id: this.newId(),
+        turnId,
+        ts: this.now(),
+        planId: proposal.planId,
+        proposalId: proposal.proposalId,
+        revision: proposal.revision,
+        title: proposal.title,
+        ...(proposal.overview ? { overview: proposal.overview } : {}),
+        ...(proposal.risks ? { risks: proposal.risks } : {}),
+        steps: proposal.steps.map((step) => ({ ...step, status: 'pending' })),
+      });
+      this.currentRunTrace?.emit('plan', 'plan_submitted', 'Plan submitted', {
+        planId: proposal.planId,
+        proposalId: proposal.proposalId,
+        revision: proposal.revision,
+        storeVersion: result.storeVersion,
+      });
+      this.handoffStopReason = 'plan_handoff';
+      this.stopAfterStepRequested = true;
+      return;
+    }
+
+    const traceType = result.kind;
+    this.currentRunTrace?.emit('plan', traceType, 'Plan execution state changed', {
+      planId: result.execution.planId,
+      proposalId: result.execution.proposalId,
+      executionId: result.execution.executionId,
+      storeVersion: result.storeVersion,
+    });
+    if (result.kind === 'plan_execution_completed' || result.kind === 'plan_execution_cancelled') {
+      this.stopAfterStepRequested = true;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -2757,6 +2870,7 @@ export class AiSdkBackend implements AgentBackend {
     this.currentUserIntent = undefined;
     this.currentStepMessageId = null;
     this.stopAfterStepRequested = false;
+    this.handoffStopReason = undefined;
     this.injectedSteeringMessages = [];
     this.toolRuntime.endTurn(turnId, this.aborted ? 'aborted' : 'completed');
     this.aborted = false;
@@ -2879,6 +2993,16 @@ function providerToolError(output: unknown): string | undefined {
     return record.text;
   }
   return record.error;
+}
+
+function isPlanToolResult(output: unknown): output is PlanToolResult {
+  if (!output || typeof output !== 'object') return false;
+  return [
+    'plan_submitted',
+    'plan_progress_updated',
+    'plan_execution_completed',
+    'plan_execution_cancelled',
+  ].includes(String((output as { kind?: unknown }).kind));
 }
 
 export function repairMakaToolCall(input: {

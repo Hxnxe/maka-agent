@@ -4,6 +4,7 @@ import { stat } from 'node:fs/promises';
 import { ipcMain } from 'electron';
 import {
   DEFAULT_SESSION_NAME,
+  isCollaborationMode,
   isPermissionMode,
   isThinkingLevel,
   sanitizeTaskLedgerTask,
@@ -181,6 +182,10 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
   ipcMain.handle('sessions:list', (_event, filter?: SessionListFilter) => runtime.listSessions(filter));
   ipcMain.handle('sessions:create', async (_event, input?: Partial<CreateSessionInput>) => {
     const cwd = input?.cwd ?? (await currentProjectRoot());
+    const collaborationMode = input?.collaborationMode ?? 'agent';
+    if (!isCollaborationMode(collaborationMode)) {
+      throw new TypeError('Invalid collaboration mode.');
+    }
     if (input?.backend === 'fake') {
       if (!canCreateFakeSession()) {
         throw new Error('FakeBackend sessions are only available in development.');
@@ -191,6 +196,7 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
         llmConnectionSlug: input.llmConnectionSlug ?? 'fake',
         model: input.model ?? 'fake-model',
         permissionMode: input.permissionMode ?? (await resolveDefaultPermissionMode(() => settingsStore.get())),
+        collaborationMode,
         name: input.name ?? DEFAULT_SESSION_NAME,
         labels: input.labels,
       });
@@ -209,6 +215,7 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       model,
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       permissionMode: input?.permissionMode ?? (await resolveDefaultPermissionMode(() => settingsStore.get())),
+      collaborationMode,
       name: input?.name ?? DEFAULT_SESSION_NAME,
       labels: input?.labels,
     });
@@ -270,6 +277,7 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
     computerUseOverlay.clearForSession(sessionId);
     computerUseTools.clearSession(sessionId);
     await runtime.stopSession(sessionId, normalizeStopSessionInput(input));
+    await runtime.interruptActivePlanExecution(sessionId, 'user_stopped_execution').catch(() => null);
     emitSessionsChanged('status-change', sessionId);
     emitSessionsChanged('turn-status-change', sessionId);
     emitSessionsChanged('message-appended', sessionId);
@@ -418,6 +426,84 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       emitSessionsChanged('mode-change', sessionId);
       return session;
     });
+  });
+  ipcMain.handle('sessions:setCollaborationMode', (_event, sessionId: string, mode: unknown) => {
+    if (!isCollaborationMode(mode)) {
+      throw new Error(`Invalid collaboration mode: ${String(mode)}`);
+    }
+    return runtime.setCollaborationMode(sessionId, mode).then((session) => {
+      emitSessionsChanged('mode-change', sessionId);
+      return session;
+    });
+  });
+  ipcMain.handle('plan-mode:getState', (_event, sessionId: string) =>
+    runtime.getPlanState(sessionId));
+  ipcMain.handle('plan-mode:requestRevision', async (_event, sessionId: string, proposalId: unknown) => {
+    if (typeof proposalId !== 'string' || !proposalId) throw new Error('Invalid proposal id');
+    const result = await runtime.requestPlanRevision(sessionId, proposalId);
+    emitSessionsChanged('mode-change', sessionId);
+    return result.state;
+  });
+  ipcMain.handle('plan-mode:abandon', async (
+    _event,
+    sessionId: string,
+    proposalId: unknown,
+  ) => {
+    if (typeof proposalId !== 'string' || !proposalId) throw new Error('Invalid proposal id');
+    const result = await runtime.abandonPlanProposal(sessionId, proposalId);
+    emitSessionsChanged('mode-change', sessionId);
+    return result.state;
+  });
+  ipcMain.handle('plan-mode:approve', async (_event, sessionId: string, input: unknown) => {
+    if (!input || typeof input !== 'object') throw new Error('Invalid plan approval');
+    const proposalId = (input as { proposalId?: unknown }).proposalId;
+    const expectedRevision = (input as { expectedRevision?: unknown }).expectedRevision;
+    const expectedStoreVersion = (input as { expectedStoreVersion?: unknown }).expectedStoreVersion;
+    if (typeof proposalId !== 'string' || !proposalId ||
+        typeof expectedRevision !== 'number' || !Number.isSafeInteger(expectedRevision) ||
+        (expectedStoreVersion !== undefined &&
+          (typeof expectedStoreVersion !== 'number' || !Number.isSafeInteger(expectedStoreVersion)))) {
+      throw new Error('Invalid plan approval');
+    }
+    await ensureSessionWorkspaceAvailable(sessionId);
+    const result = await runtime.approvePlan({
+      sessionId,
+      proposalId,
+      expectedRevision,
+      ...(expectedStoreVersion !== undefined ? { expectedStoreVersion } : {}),
+    });
+    if (result.event.type !== 'plan_approved') throw new Error('Plan approval did not create an execution');
+    const turnId = randomUUID();
+    const iterator = runtime.sendMessage(sessionId, {
+      turnId,
+      text: `Execute the approved plan ${result.event.execution.planId}.`,
+    });
+    void streamEvents(sessionId, iterator, { turnId, goalBoundary: 'external' });
+    emitSessionsChanged('mode-change', sessionId);
+    return { state: result.state, turnId, executionId: result.event.execution.executionId };
+  });
+  ipcMain.handle('plan-mode:resume', async (_event, sessionId: string, executionId: unknown) => {
+    if (typeof executionId !== 'string' || !executionId) throw new Error('Invalid execution id');
+    await ensureSessionWorkspaceAvailable(sessionId);
+    const result = await runtime.resumePlanExecution(sessionId, executionId);
+    const turnId = randomUUID();
+    const iterator = runtime.sendMessage(sessionId, {
+      turnId,
+      text: `Resume the approved plan execution ${executionId}.`,
+    });
+    void streamEvents(sessionId, iterator, { turnId, goalBoundary: 'external' });
+    emitSessionsChanged('mode-change', sessionId);
+    return { state: result.state, turnId, executionId };
+  });
+  ipcMain.handle('plan-mode:abandonExecution', async (
+    _event,
+    sessionId: string,
+    executionId: unknown,
+  ) => {
+    if (typeof executionId !== 'string' || !executionId) throw new Error('Invalid execution id');
+    const result = await runtime.cancelPlanExecution(sessionId, executionId);
+    emitSessionsChanged('mode-change', sessionId);
+    return result.state;
   });
   ipcMain.handle('sessions:setModel', async (_event, sessionId: string, input: unknown) => {
     const { llmConnectionSlug, model } = normalizeSessionModelSelection(input);

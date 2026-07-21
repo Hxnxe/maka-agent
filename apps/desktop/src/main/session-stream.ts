@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { expertTeamIdFromLabels, resolveModelVisionSupport } from '@maka/core';
+import { activePlanExecution, expertTeamIdFromLabels, resolveModelVisionSupport } from '@maka/core';
 import type { SessionChangedReason, SessionEvent } from '@maka/core';
+import type { PlanStore } from '@maka/core/plan';
 import type { LlmConnection } from '@maka/core/llm-connections';
 import type { LlmCallRecord, ToolInvocationRecord } from '@maka/core/usage-stats/types';
 import {
@@ -11,6 +12,9 @@ import {
   buildLlmHistorySummarizer,
   buildMcpTools,
   buildProviderOptions,
+  buildCancelPlanTool,
+  buildSubmitPlanTool,
+  buildUpdatePlanTool,
   createProviderRequestCaptureRecorder,
   getAIModel,
   loadHistoryCompactBlocksFromArtifacts,
@@ -18,7 +22,11 @@ import {
   persistSynthesisCacheBlocksToArtifacts,
   recordLlmCall,
   recordToolInvocation,
+  renderPlanExecutionPrompt,
+  renderInterruptedPlanContext,
+  renderPlanModePrompt,
   resolveSelectedModelContextWindow,
+  selectCollaborationTools,
 } from '@maka/runtime';
 import type {
   BackendFactory,
@@ -92,10 +100,12 @@ export interface AiSdkBackendFactoryDeps {
   agentTeamLeadTools: AssembledTools['agentTeamLeadTools'];
   builtinTools: AssembledTools['builtinTools'];
   toolAvailability: AssembledTools['toolAvailability'];
+  sandboxDiagnosticsProvider: AssembledTools['sandboxDiagnosticsProvider'];
   persistToolArtifacts: ToolArtifactPersistence['persistToolArtifacts'];
   persistArchivedToolResult: ToolArtifactPersistence['persistArchivedToolResult'];
   readArchivedToolResult: ToolArtifactPersistence['readArchivedToolResult'];
   runtimeCommitStore: RuntimeCommitStore;
+  planStore: PlanStore;
   safeSendToRenderer: (channel: string, ...args: unknown[]) => void;
   getRuntime: () => SessionManager;
   getLookupPricing: () => PricingLookup;
@@ -127,10 +137,12 @@ export function createAiSdkBackendFactory(deps: AiSdkBackendFactoryDeps): Backen
     agentTeamLeadTools,
     builtinTools,
     toolAvailability,
+    sandboxDiagnosticsProvider,
     persistToolArtifacts,
     persistArchivedToolResult,
     readArchivedToolResult,
     runtimeCommitStore,
+    planStore,
     safeSendToRenderer,
     getRuntime,
     getLookupPricing,
@@ -144,6 +156,12 @@ export function createAiSdkBackendFactory(deps: AiSdkBackendFactoryDeps): Backen
     const modelFetch = buildSubscriptionModelFetch(connection, ctx.sessionId, model);
     const memoryPromptSnapshot = await systemPromptService.buildLocalMemoryPromptFragment();
     const supportsVision = modelSupportsVision(connection, model);
+    const collaborationMode = ctx.header.collaborationMode ?? 'agent';
+    const planState = await planStore.readState(ctx.sessionId);
+    const activeExecution = activePlanExecution(planState);
+    const interruptedExecution = [...planState.executions]
+      .reverse()
+      .find((execution) => execution.status === 'interrupted');
     const candidateTools = isComputerUseRealModelE2e
       ? computerUseTools
       : ctx.tools
@@ -163,8 +181,16 @@ export function createAiSdkBackendFactory(deps: AiSdkBackendFactoryDeps): Backen
     const agentTeam = ctx.agentTeam ?? (expertTeamId
       ? { role: 'lead' as const, teamId: expertTeamId, agentId: 'lead' }
       : undefined);
+    const planControlTools = collaborationMode === 'plan'
+      ? [buildSubmitPlanTool(planStore, interruptedExecution?.executionId)]
+      : activeExecution
+        ? [
+            buildUpdatePlanTool(planStore, activeExecution.executionId),
+            buildCancelPlanTool(planStore, activeExecution.executionId),
+          ]
+        : [];
     const backendTools = computerUseToolsForModel(
-      candidateTools,
+      [...candidateTools, ...planControlTools],
       computerUseTools,
       supportsVision,
     );
@@ -172,28 +198,47 @@ export function createAiSdkBackendFactory(deps: AiSdkBackendFactoryDeps): Backen
       candidateToolAvailability,
       supportsVision,
     );
-    const backendToolNames = new Set([
-      ...backendTools.map((tool) => tool.name),
-      ...(expertDispatchTool ? [expertDispatchTool.name, ...agentTeamLeadTools.map((tool) => tool.name)] : []),
-    ]);
+    const selectedTools = selectCollaborationTools({
+      mode: collaborationMode,
+      tools: expertDispatchTool
+        ? [...backendTools, expertDispatchTool, ...agentTeamLeadTools]
+        : backendTools,
+      hasActiveExecution: activeExecution !== undefined,
+    });
+    const backendToolNames = new Set(selectedTools.map((tool) => tool.name));
     const backendSkillHost = buildHostCapabilitiesFromBinding(backendToolNames);
     // Child backends share the parent sessionId but intentionally have a
     // narrower tool surface. They do not receive the Desktop Skill tool, so
     // they must not overwrite the parent session's resolver entry.
     if (!ctx.tools) desktopSessionSkillHosts.set(ctx.sessionId, backendSkillHost);
+    const effectivePermissionMode = collaborationMode === 'plan' ? 'explore' : ctx.header.permissionMode;
+    const sandboxDiagnosticsSnapshot = await sandboxDiagnosticsProvider.resolve({
+      mode: effectivePermissionMode,
+      cwd: ctx.header.cwd,
+    });
 
     return new AiSdkBackend({
       sessionId: ctx.sessionId,
-      header: { ...ctx.header, model },
+      header: { ...ctx.header, model, permissionMode: effectivePermissionMode },
       appendMessage: ctx.appendMessage ?? ((message) => ctx.store.appendMessage(ctx.sessionId, message)),
       connection,
       apiKey: apiKey ?? '',
       modelId: model,
       permissionEngine,
       modelFactory: (input) => getAIModel({ ...input, fetch: modelFetch }),
-      tools: expertDispatchTool
-        ? [...backendTools, expertDispatchTool, ...agentTeamLeadTools]
-        : backendTools,
+      tools: selectedTools,
+      sandboxDiagnosticsSnapshot,
+      planTraceContext: {
+        mode: collaborationMode,
+        storeVersion: planState.storeVersion,
+        ...(activeExecution
+          ? {
+              planId: activeExecution.planId,
+              proposalId: activeExecution.proposalId,
+              executionId: activeExecution.executionId,
+            }
+          : {}),
+      },
       agentTeam,
       toolAvailability: backendToolAvailability,
       spawnChildAgent: (input) => getRuntime().spawnChildAgent(ctx.sessionId, input),
@@ -204,13 +249,34 @@ export function createAiSdkBackendFactory(deps: AiSdkBackendFactoryDeps): Backen
         name: 'desktop-default-history-budget',
         modelId: model,
       }),
-      systemPrompt: ({ cwd }) => systemPromptService.buildBackendSystemPrompt(ctx.header, cwd, {
-        memoryFragment: memoryPromptSnapshot,
-        childInstruction: ctx.systemPrompt,
-        skillBudget: { contextWindow: resolveSelectedModelContextWindow(connection, model) },
-        host: backendSkillHost,
-      }),
-      turnTailPrompt: ({ cwd, sessionId }) => systemPromptService.buildTurnTailPrompt(cwd, sessionId),
+      systemPrompt: async ({ cwd }) => {
+        const base = await systemPromptService.buildBackendSystemPrompt(
+          ctx.header,
+          cwd,
+          {
+            memoryFragment: memoryPromptSnapshot,
+            childInstruction: ctx.systemPrompt,
+            skillBudget: { contextWindow: resolveSelectedModelContextWindow(connection, model) },
+            host: backendSkillHost,
+          },
+        );
+        return collaborationMode === 'plan' ? `${base}\n\n${renderPlanModePrompt()}` : base;
+      },
+      turnTailPrompt: async ({ cwd, sessionId }) => {
+        const base = await systemPromptService.buildTurnTailPrompt(cwd, sessionId);
+        const execution = activeExecution ?? (
+          collaborationMode === 'plan' ? interruptedExecution : undefined
+        );
+        if (!execution) return base;
+        const proposal = planState.proposals.find(
+          (candidate) => candidate.proposalId === execution.proposalId,
+        );
+        if (!proposal) return base;
+        const planContext = activeExecution
+          ? renderPlanExecutionPrompt({ proposal, execution: activeExecution })
+          : renderInterruptedPlanContext({ proposal, execution });
+        return `${base}\n\n${planContext}`;
+      },
       shellRunContextSummary: ctx.shellRunContextSummary,
       lookupPricing: getLookupPricing(),
       recordLlmCall: (event: LlmCallRecord) => recordLlmCall({ repo: telemetryRepo, lookupPricing: getLookupPricing() }, event),
@@ -311,6 +377,7 @@ export interface SessionStreamerDeps {
   computerUseTools: AssembledTools['computerUseTools'];
   safeSendToRenderer: (channel: string, ...args: unknown[]) => void;
   emitSessionsChanged: (reason: SessionChangedReason, sessionId?: string) => void;
+  interruptActivePlanExecution?: (sessionId: string, reason: string) => Promise<unknown>;
 }
 
 function isStatusChangingSessionEvent(event: SessionEvent): boolean {
@@ -340,6 +407,7 @@ export function createSessionStreamer(deps: SessionStreamerDeps): StreamEvents {
     computerUseTools,
     safeSendToRenderer,
     emitSessionsChanged,
+    interruptActivePlanExecution,
   } = deps;
 
   return function streamEvents(
@@ -393,8 +461,17 @@ export function createSessionStreamer(deps: SessionStreamerDeps): StreamEvents {
         computerUseOverlay.clearForSession(sessionId);
         computerUseTools.clearSession(sessionId);
       },
-      onDrained: () => {
+      onDrained: async (outcome) => {
         emitSessionsChanged('message-appended', sessionId);
+        if (
+          interruptActivePlanExecution &&
+          (outcome.kind === 'aborted' || outcome.kind === 'errored')
+        ) {
+          await interruptActivePlanExecution(
+            sessionId,
+            outcome.kind === 'aborted' ? 'turn_aborted' : `turn_error:${outcome.reason}`,
+          ).catch(() => undefined);
+        }
       },
     });
     if (started.kind === 'unavailable') throw new Error(started.reason);

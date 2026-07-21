@@ -127,6 +127,18 @@ export type { MakaTool, MakaToolContext } from './tool-runtime.js';
 export { buildMcpTools, mcpProxyToolName } from './mcp-tools.js';
 export type { McpToolProvider, BuildMcpToolsOptions } from './mcp-tools.js';
 export { buildAskUserQuestionTool } from './ask-user-question-tool.js';
+export {
+  buildSubmitPlanTool,
+  buildUpdatePlanTool,
+  buildCancelPlanTool,
+} from './plan-tools.js';
+export type { PlanToolResult } from './plan-tools.js';
+export {
+  selectCollaborationTools,
+  renderPlanModePrompt,
+  renderPlanExecutionPrompt,
+  renderInterruptedPlanContext,
+} from './plan-mode.js';
 export { terminateChildProcessTree } from './process-tree-terminator.js';
 export type { AttachmentByteReader } from '@maka/core/attachments';
 export type {
@@ -376,9 +388,11 @@ export {
   buildSeatbeltPolicy,
   createDefaultSandboxManager,
   createBuiltinSandboxManager,
+  createSandboxDiagnosticsProvider,
   createSeatbeltExecArgs,
   escapeSeatbeltRegex,
   detectLinuxSandboxCapability,
+  toSandboxRunTraceProjection,
 } from './sandbox/index.js';
 export type {
   BuildSeatbeltPolicyInput,
@@ -388,6 +402,17 @@ export type {
   DetectLinuxSandboxCapabilityInput,
   LinuxBubblewrapBackendOptions,
   LinuxSandboxCapability,
+  CreateSandboxDiagnosticsProviderInput,
+  ResolveSandboxDiagnosticsInput,
+  SandboxDiagnosticCapability,
+  SandboxDiagnosticCapabilityStatus,
+  SandboxDiagnosticFailureReason,
+  SandboxDiagnosticFailureStage,
+  SandboxDiagnosticFileSystemMode,
+  SandboxDiagnosticNetworkMode,
+  SandboxDiagnosticsProvider,
+  SandboxDiagnosticsSnapshot,
+  SandboxRunTraceProjection,
 } from './sandbox/index.js';
 export type {
   SandboxBackend,
@@ -403,6 +428,15 @@ export type {
   SandboxTransformResult,
   SandboxType,
   SandboxablePreference,
+  SandboxErrorDomain,
+  SandboxErrorMetadata,
+  SandboxErrorStage,
+  SandboxErrorWithMetadata,
+} from './sandbox/index.js';
+export {
+  SandboxCommandError,
+  sandboxErrorMetadata,
+  serializeSandboxError,
 } from './sandbox/index.js';
 export {
   AGENT_CONTEXT_ISOLATED,

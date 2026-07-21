@@ -479,13 +479,19 @@ export interface PermissionDecisionAckEvent extends BaseEvent {
 export interface PlanSubmittedEvent extends BaseEvent {
   type: 'plan_submitted';
   planId: string;
+  proposalId?: string;
+  revision?: number;
   title: string;
-  markdownPath: string;
+  overview?: string;
+  risks?: string[];
+  /** Legacy file-backed proposal representation. */
+  markdownPath?: string;
   steps?: PlanStep[];
 }
 
 export interface PlanStep {
   id: string;
+  title: string;
   description: string;
   status: 'pending' | 'in_progress' | 'completed' | 'skipped';
   files?: string[];

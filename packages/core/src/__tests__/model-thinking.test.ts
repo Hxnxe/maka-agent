@@ -340,11 +340,7 @@ describe('thinkingVariantsForModel', () => {
   });
 
   test('xAI Grok 4.5 exposes its declared reasoning effort levels', () => {
-    assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.5')], [
-      'low',
-      'medium',
-      'high',
-    ]);
+    assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.5')], ['low', 'medium', 'high']);
     assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.3')], []);
   });
 

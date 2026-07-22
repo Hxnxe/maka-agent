@@ -162,11 +162,7 @@ describe('buildProviderOptions: thinking level', () => {
   });
 
   test('xAI Grok 4.5 sends its declared reasoning effort under the xai namespace', () => {
-    assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.5')], [
-      'low',
-      'medium',
-      'high',
-    ]);
+    assert.deepEqual([...thinkingVariantsForModel('xai', 'grok-4.5')], ['low', 'medium', 'high']);
     assert.deepEqual(buildProviderOptions(conn('xai'), 'grok-4.5', 'high'), {
       xai: { reasoningEffort: 'high' },
     });

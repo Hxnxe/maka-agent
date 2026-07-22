@@ -101,7 +101,6 @@ describe('FileConnectionStore', () => {
     });
   });
 
-
   test('persists distinct OpenCode Zen and Go ids with exact selected models', async () => {
     await withConnectionStore(async (store, dir) => {
       await store.create({

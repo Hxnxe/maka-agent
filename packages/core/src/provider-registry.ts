@@ -490,11 +490,10 @@ const moonshot = GENERATED_MODELS_DEV_PROVIDER_FACTS.moonshot;
 if (moonshot.id !== 'moonshotai-cn' || moonshot.api !== 'https://api.moonshot.cn/v1') {
   throw new Error('models.dev Moonshot provider facts are missing the China platform id or API');
 }
-const moonshotModelIds = toolCallingModelIds(
-  'Moonshot',
-  GENERATED_MODELS_DEV_METADATA.moonshot,
-  ['kimi-k2.6', 'kimi-k2.7-code'],
-).filter((id) => GENERATED_MODELS_DEV_METADATA.moonshot[id]?.lifecycle !== 'deprecated');
+const moonshotModelIds = toolCallingModelIds('Moonshot', GENERATED_MODELS_DEV_METADATA.moonshot, [
+  'kimi-k2.6',
+  'kimi-k2.7-code',
+]).filter((id) => GENERATED_MODELS_DEV_METADATA.moonshot[id]?.lifecycle !== 'deprecated');
 const cloudflareWorkersAi = GENERATED_MODELS_DEV_PROVIDER_FACTS['cloudflare-workers-ai'];
 if (cloudflareWorkersAi.id !== 'cloudflare-workers-ai') {
   throw new Error(

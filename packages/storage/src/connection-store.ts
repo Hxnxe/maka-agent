@@ -111,7 +111,11 @@ class FileConnectionStore implements ConnectionStore {
           patch.baseUrl !== undefined ||
           patch.defaultModel !== undefined ||
           patch.models !== undefined);
-      const models = updatesModelCache ? patch.models : clearsModelCache ? undefined : current.models;
+      const models = updatesModelCache
+        ? patch.models
+        : clearsModelCache
+          ? undefined
+          : current.models;
       let defaultModel = patch.defaultModel ?? current.defaultModel;
       let enabledModelIds = connectionEnabledModelIds({
         defaultModel,
@@ -122,8 +126,7 @@ class FileConnectionStore implements ConnectionStore {
       // connection as model_not_enabled once models are fetched. Fallback
       // catalogs and metadata-only updates do not own this selection.
       const writesFetchedModels =
-        Object.prototype.hasOwnProperty.call(patch, 'models') &&
-        patch.modelSource === 'fetched';
+        Object.prototype.hasOwnProperty.call(patch, 'models') && patch.modelSource === 'fetched';
       if (writesFetchedModels && models && models.length > 0) {
         const reconciled = reconcileConnectionAfterModelFetch(
           { defaultModel, enabledModelIds },

@@ -118,15 +118,8 @@ describe('models.dev provider conformance', () => {
       'explicit-preview',
     );
     const legacy = { ...connection, models: undefined, enabledModelIds: undefined };
-    assert.equal(
-      (await testConnection(legacy, 'moonshot-key')).modelTested,
-      'moonshot-v1-8k',
-    );
-    assert.deepEqual(requestedModels, [
-      'kimi-k2.6',
-      'explicit-preview',
-      'moonshot-v1-8k',
-    ]);
+    assert.equal((await testConnection(legacy, 'moonshot-key')).modelTested, 'moonshot-v1-8k');
+    assert.deepEqual(requestedModels, ['kimi-k2.6', 'explicit-preview', 'moonshot-v1-8k']);
   });
 
   test('connection probe bounds a fallback snapshot to its non-empty inventory', async () => {

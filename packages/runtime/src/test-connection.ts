@@ -28,13 +28,9 @@ function resolveConnectionTestModel(
   const hasAuthoritativeInventory =
     connection.modelSource === 'fetched' && Array.isArray(connection.models);
   const discoveredIds =
-    connection.models
-      ?.map(({ id }) => id.trim())
-      .filter((id) => id.length > 0) ?? [];
+    connection.models?.map(({ id }) => id.trim()).filter((id) => id.length > 0) ?? [];
   const discovered =
-    hasAuthoritativeInventory || discoveredIds.length > 0
-      ? new Set(discoveredIds)
-      : undefined;
+    hasAuthoritativeInventory || discoveredIds.length > 0 ? new Set(discoveredIds) : undefined;
   const candidates = [
     ...connectionEnabledModelIds(connection),
     ...fallbackModels,

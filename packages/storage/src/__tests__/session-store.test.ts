@@ -130,6 +130,56 @@ describe('FileSessionStore CRUD', () => {
     });
   });
 
+  test('persists edit-and-resend revision lineage separately from branch lineage', async () => {
+    await withStore(async (store) => {
+      const header = await store.create(
+        makeInput({
+          name: 'Conversation version',
+          revisionRootSessionId: 'root-session',
+          revisionParentSessionId: 'previous-version',
+          revisionOfTurnId: 'turn-edited',
+          revisionIndex: 2,
+          revisionState: 'preparing',
+        }),
+      );
+
+      assert.equal(header.parentSessionId, undefined);
+      assert.equal(header.revisionRootSessionId, 'root-session');
+      assert.equal(header.revisionParentSessionId, 'previous-version');
+      assert.equal(header.revisionOfTurnId, 'turn-edited');
+      assert.equal(header.revisionIndex, 2);
+      assert.equal(header.revisionState, 'preparing');
+      const [summary] = await store.list();
+      assert.equal(summary?.revisionRootSessionId, 'root-session');
+      assert.equal(summary?.revisionParentSessionId, 'previous-version');
+      assert.equal(summary?.revisionOfTurnId, 'turn-edited');
+      assert.equal(summary?.revisionIndex, 2);
+      assert.equal(summary?.revisionState, 'preparing');
+    });
+  });
+
+  test('rejects partial or unsafe edit-and-resend revision lineage', async () => {
+    await withStore(async (store) => {
+      await assert.rejects(
+        () => store.create(makeInput({ revisionRootSessionId: 'root-only' })),
+        /Invalid session revision lineage/,
+      );
+      await assert.rejects(
+        () =>
+          store.create(
+            makeInput({
+              revisionRootSessionId: '../escape',
+              revisionParentSessionId: 'parent',
+              revisionOfTurnId: 'turn',
+              revisionIndex: 2,
+              revisionState: 'preparing',
+            }),
+          ),
+        /Invalid session revision lineage/,
+      );
+    });
+  });
+
   test('setFlagged toggles the flag without touching other fields', async () => {
     await withStore(async (store) => {
       const header = await store.create(makeInput({ name: 'Pin me' }));

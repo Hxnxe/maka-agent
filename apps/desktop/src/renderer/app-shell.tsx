@@ -13,6 +13,7 @@ import {
 import type { PermissionMode, PlanReminder, SessionSummary, UiLocale, UiLocalePreference } from '@maka/core';
 import {
   buildDeepResearchImplementationPrompt,
+  collapseSessionRevisions,
   hasSettledInitialOnboarding,
   resolveUiLocale,
 } from '@maka/core';
@@ -60,6 +61,7 @@ import { deriveAppShellTurnViewModel } from './app-shell-turn-view-model';
 import { readScrollMotionBehavior } from './scroll-motion-policy';
 import { deriveBranchBanner } from './branch-banner';
 import { filterSessions, readNavSelection } from './nav-selection';
+import { deriveSessionRevisionNavigation } from './session-revisions';
 import {
   SESSION_LIST_COLLAPSED_WIDTH,
   SESSION_LIST_EXPANDED_MAX_WIDTH,
@@ -292,6 +294,19 @@ function AppShellContent({
     revisionDraftRef.current = draft;
     setRevisionDraft(draft);
   }, []);
+  useEffect(() => {
+    const draft = revisionDraftRef.current;
+    if (!draft) return;
+    const source = sessions.find((session) => session.id === draft.sourceSessionId);
+    const owner = sessions.find((session) => session.id === draft.draftSessionId);
+    if (source && owner && !source.isArchived && !owner.isArchived) return;
+    composerRef.current?.clearDraft(draft.draftSessionId);
+    if (draft.sourceSessionId !== draft.draftSessionId) {
+      composerRef.current?.clearDraft(draft.sourceSessionId);
+    }
+    commitRevisionDraft(null);
+  }, [sessions, commitRevisionDraft]);
+
   const {
     resumePendingSessionId,
     resumeParkDescriptionBySession,
@@ -319,7 +334,14 @@ function AppShellContent({
   // Running → Waiting → Blocked → Active → Review → Done → Archived);
   // `aborted` is dropped. Pinned (flagged) sessions float to the top
   // in their own group, preserving the PR48 pin-floats behavior.
-  const visibleSessions = useMemo(() => filterSessions(sessions, navSelection), [sessions, navSelection]);
+  const sidebarSessions = useMemo(
+    () => collapseSessionRevisions(sessions, activeId),
+    [sessions, activeId],
+  );
+  const visibleSessions = useMemo(
+    () => filterSessions(sidebarSessions, navSelection),
+    [sidebarSessions, navSelection],
+  );
   const sessionStatusGroups = useMemo(
     () => deriveSessionStatusGroups(visibleSessions, { pinFirst: true, locale: uiLocale }),
     [visibleSessions, uiLocale],
@@ -696,6 +718,10 @@ function AppShellContent({
     () => deriveBranchBanner(activeSession, sessions),
     [activeSession?.parentSessionId, sessions],
   );
+  const revisionNavigation = useMemo(
+    () => deriveSessionRevisionNavigation(sessions, activeId),
+    [sessions, activeId],
+  );
 
   function handleBranchBannerClick(parentSessionId: string): void {
     openSessionInChat(parentSessionId);
@@ -805,7 +831,7 @@ function AppShellContent({
     // sessions flash an 已阻塞 group on first paint until the first
     // refreshSessions() overwrites the seed.
     const next = seedSessions(snapshot.sessions);
-    bootstrapSelectionLease.reconcile(next);
+    bootstrapSelectionLease.reconcile(collapseSessionRevisions(next));
     // Seed connections — avoids separate connections:list + getDefault IPCs
     setConnections(snapshot.connections);
     setDefaultConnection(snapshot.defaultSlug);
@@ -1250,7 +1276,7 @@ function AppShellContent({
 
   async function bootstrapSessions() {
     const next = await refreshSessions();
-    bootstrapSelectionLease.reconcile(next);
+    bootstrapSelectionLease.reconcile(collapseSessionRevisions(next));
     bootstrapSelectionLease.release();
   }
 
@@ -1608,6 +1634,8 @@ function AppShellContent({
                 scrollBehavior={readScrollMotionBehavior()}
                 branchBanner={branchBanner}
                 onBranchBannerClick={handleBranchBannerClick}
+                revisionNavigation={revisionNavigation}
+                onRevisionNavigate={openSessionInChat}
                 onNew={createSession}
                 onPromptSuggestion={(prompt) => composerRef.current?.appendText(prompt)}
                 onContinueDeepResearchHandoff={(run) => {

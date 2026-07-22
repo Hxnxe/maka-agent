@@ -36,21 +36,17 @@ export interface AppShellRevisionActions {
   cancelRevisionDraft(): Promise<void>;
 }
 
-function nextAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
-}
-
 /**
  * Desktop edit-and-resend follows the CLI rewind boundary without creating an
  * empty branch at click time:
  *
  *   edit click -> local composer draft only
- *   send       -> branchBeforeTurn -> switch child -> normal send
+ *   send       -> reviseBeforeTurn -> switch version -> normal send
  *
- * If normal send fails after the branch was prepared, the child remains active
- * with the edited text and a second send retries there instead of branching
- * again. Attachment-bearing source or retained context is rejected until the
- * branch artifact copier can preserve those references without data loss.
+ * If normal send fails after a revision was prepared, that version remains
+ * active with the edited text and a second send retries there instead of
+ * creating another version. Attachment-bearing source or retained context is
+ * rejected until the revision copier can preserve those references losslessly.
  */
 export function createAppShellRevisionActions(deps: {
   uiLocale: UiLocale;
@@ -151,39 +147,73 @@ export function createAppShellRevisionActions(deps: {
     toastApi.info(copy.revisionStartedTitle, copy.revisionStartedDescription);
   }
 
+  async function rollbackPreparedRevision(
+    draft: TurnRevisionDraft,
+    revisionSessionId: string,
+    text: string,
+  ): Promise<void> {
+    composerRef.current?.clearDraft(revisionSessionId);
+    const current = revisionDraftRef.current;
+    let restored: TurnRevisionDraft | undefined;
+    if (current?.draftSessionId === revisionSessionId) {
+      restored = { ...draft, draftSessionId: draft.sourceSessionId };
+      composerRef.current?.setDraft(draft.sourceSessionId, text);
+      commitRevisionDraft(restored);
+    }
+    if (activeIdRef.current === revisionSessionId) {
+      openSessionInChat(draft.sourceSessionId);
+      setMessages([]);
+      await refreshMessages(draft.sourceSessionId).catch(() => false);
+      if (activeIdRef.current === draft.sourceSessionId && revisionDraftRef.current === restored) {
+        composerRef.current?.setText(text);
+        composerRef.current?.focus();
+      }
+    }
+    await window.maka.sessions.remove(revisionSessionId).catch(() => undefined);
+    await refreshSessions().catch(() => []);
+  }
+
   async function prepareRevisionSend(text: string): Promise<boolean> {
     const draft = revisionDraftRef.current;
     if (!draft || activeIdRef.current !== draft.draftSessionId) return false;
-    // A previous attempt already prepared the child; retry normal send there.
+    // A previous attempt already prepared the version; retry normal send there.
     if (draft.draftSessionId !== draft.sourceSessionId) return true;
 
     const sourceSessionId = draft.sourceSessionId;
+    let preparedSessionId: string | undefined;
     try {
-      const newSession = await window.maka.sessions.branchBeforeTurn(sourceSessionId, {
+      const newSession = await window.maka.sessions.reviseBeforeTurn(sourceSessionId, {
         sourceTurnId: draft.sourceTurnId,
       });
-      upsertSessionSummary(newSession);
+      preparedSessionId = newSession.id;
       if (activeIdRef.current !== sourceSessionId || revisionDraftRef.current !== draft) {
-        await refreshSessions();
+        await rollbackPreparedRevision(draft, newSession.id, text);
         return false;
       }
 
       const prepared = { ...draft, draftSessionId: newSession.id };
+      composerRef.current?.setDraft(newSession.id, text);
       commitRevisionDraft(prepared);
+      upsertSessionSummary(newSession);
       openSessionInChat(newSession.id);
       setMessages([]);
-      await refreshMessages(newSession.id);
-      // Let Composer swap its draftKey before writing into the child draft.
-      await nextAnimationFrame();
-      if (activeIdRef.current !== newSession.id || revisionDraftRef.current !== prepared) {
+      const loaded = await refreshMessages(newSession.id);
+      if (
+        !loaded ||
+        activeIdRef.current !== newSession.id ||
+        revisionDraftRef.current !== prepared
+      ) {
+        await rollbackPreparedRevision(draft, newSession.id, text);
         return false;
       }
-      composerRef.current?.setText(text);
       composerRef.current?.focus();
       toastApi.info(copy.revisionReadyTitle, copy.revisionReadyDescription);
       await refreshSessions();
       return true;
     } catch (error) {
+      if (preparedSessionId) {
+        await rollbackPreparedRevision(draft, preparedSessionId, text);
+      }
       if (activeIdRef.current !== sourceSessionId) return false;
       if (isSessionWorkspaceUnavailableError(error)) {
         showSessionWorkspaceUnavailableToast(toastApi, uiLocale);
@@ -200,18 +230,20 @@ export function createAppShellRevisionActions(deps: {
   async function cancelRevisionDraft(): Promise<void> {
     const draft = revisionDraftRef.current;
     if (!draft) return;
+    const preparedSessionId =
+      draft.draftSessionId !== draft.sourceSessionId ? draft.draftSessionId : undefined;
     commitRevisionDraft(null);
-    if (draft.draftSessionId !== draft.sourceSessionId) {
-      composerRef.current?.clearDraft(draft.draftSessionId);
+    composerRef.current?.setDraft(draft.sourceSessionId, draft.previousComposerText);
+    if (preparedSessionId) composerRef.current?.clearDraft(preparedSessionId);
+    if (activeIdRef.current !== draft.sourceSessionId) {
+      openSessionInChat(draft.sourceSessionId);
+      setMessages([]);
+      await refreshMessages(draft.sourceSessionId).catch(() => false);
     }
-    if (activeIdRef.current === draft.sourceSessionId) {
-      composerRef.current?.setText(draft.previousComposerText);
-      return;
+    if (preparedSessionId) {
+      await window.maka.sessions.remove(preparedSessionId).catch(() => undefined);
+      await refreshSessions().catch(() => []);
     }
-    openSessionInChat(draft.sourceSessionId);
-    setMessages([]);
-    await refreshMessages(draft.sourceSessionId);
-    await nextAnimationFrame();
     if (activeIdRef.current === draft.sourceSessionId) {
       composerRef.current?.setText(draft.previousComposerText);
       composerRef.current?.focus();

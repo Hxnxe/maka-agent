@@ -13,6 +13,7 @@ import {
   normalizeBranchFromTurnInput,
   normalizePermissionResponse,
   normalizeRegenerateTurnInput,
+  normalizeReviseBeforeTurnInput,
   normalizeSessionSendCommand,
   normalizeStopSessionInput,
   normalizeUserQuestionResponse,
@@ -118,25 +119,30 @@ describe('permission response IPC boundary', () => {
       normalizeBranchFromTurnInput({ sourceTurnId: 'turn-3', name: '  Branch name  ', ignored: 1 }),
       { sourceTurnId: 'turn-3', name: 'Branch name' },
     );
+    assert.deepEqual(
+      normalizeReviseBeforeTurnInput({ sourceTurnId: 'turn-4', name: 'ignored' }),
+      { sourceTurnId: 'turn-4' },
+    );
   });
 
   it('rejects malformed turn action inputs at the IPC boundary', () => {
     assert.throws(() => normalizeRegenerateTurnInput({ sourceTurnId: 'turn-1', turnId: 1 }), /turnId/);
     assert.throws(() => normalizeBranchFromTurnInput({ sourceTurnId: 'turn-1', name: 1 }), /branch name/);
+    assert.throws(() => normalizeReviseBeforeTurnInput({ sourceTurnId: 1 }), /revision sourceTurnId/);
   });
 
   it('routes turn actions through main-process normalizers', async () => {
     const main = await readMainProcessCombinedSource();
     const regenerateHandler = main.match(/ipcMain\.handle\('sessions:regenerateTurn'[\s\S]*?\n  \);/)?.[0] ?? '';
     const branchHandler = main.match(/ipcMain\.handle\('sessions:branchFromTurn'[\s\S]*?\n  \);/)?.[0] ?? '';
-    const branchBeforeHandler = main.match(/ipcMain\.handle\('sessions:branchBeforeTurn'[\s\S]*?\n  \);/)?.[0] ?? '';
+    const reviseBeforeHandler = main.match(/ipcMain\.handle\('sessions:reviseBeforeTurn'[\s\S]*?\n  \);/)?.[0] ?? '';
 
     assert.match(regenerateHandler, /normalizeRegenerateTurnInput\(input\)/);
     assert.doesNotMatch(regenerateHandler, /runtime\.regenerateTurn\(sessionId,\s*\{\s*\.\.\.input/);
     assert.match(branchHandler, /handleBranchFromTurn\(sessionId, input/);
     assert.doesNotMatch(branchHandler, /runtime\.branchFromTurn\(sessionId,\s*input\)/);
-    assert.match(branchBeforeHandler, /handleBranchBeforeTurn\(sessionId, input/);
-    assert.doesNotMatch(branchBeforeHandler, /runtime\.branchBeforeTurn\(sessionId,\s*input\)/);
+    assert.match(reviseBeforeHandler, /handleReviseBeforeTurn\(sessionId, input/);
+    assert.doesNotMatch(reviseBeforeHandler, /runtime\.reviseBeforeTurn\(sessionId,\s*input\)/);
   });
 
   it('normalizes session send commands and rejects malformed send payloads', () => {
@@ -399,7 +405,7 @@ describe('permission response IPC boundary', () => {
     );
     assert.match(
       bootstrapSessions[0],
-      /bootstrapSelectionLease\.reconcile\(next\);[\s\S]*bootstrapSelectionLease\.release\(\)/,
+      /bootstrapSelectionLease\.reconcile\(collapseSessionRevisions\(next\)\);[\s\S]*bootstrapSelectionLease\.release\(\)/,
       'the fallback bootstrap must share and then release the session owner\'s selection lease',
     );
     assert.match(

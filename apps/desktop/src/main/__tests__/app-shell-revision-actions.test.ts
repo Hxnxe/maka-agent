@@ -37,10 +37,11 @@ function userMessage(
 }
 
 function installWindow(
-  branchBeforeTurn: (
+  reviseBeforeTurn: (
     sessionId: string,
     input: { sourceTurnId: string },
   ) => Promise<SessionSummary>,
+  remove: (sessionId: string) => Promise<void>,
 ): () => void {
   const target = globalThis as unknown as { window?: unknown };
   const hadWindow = Object.prototype.hasOwnProperty.call(target, 'window');
@@ -48,11 +49,7 @@ function installWindow(
   Object.defineProperty(target, 'window', {
     configurable: true,
     value: {
-      maka: { sessions: { branchBeforeTurn } },
-      requestAnimationFrame(callback: FrameRequestCallback) {
-        callback(0);
-        return 1;
-      },
+      maka: { sessions: { reviseBeforeTurn, remove } },
     },
     writable: true,
   });
@@ -70,24 +67,29 @@ function installWindow(
 }
 
 function createHarness(options: {
-  branchBeforeTurn: (
+  reviseBeforeTurn: (
     sessionId: string,
     input: { sourceTurnId: string },
   ) => Promise<SessionSummary>;
   messages?: StoredMessage[];
   pendingAttachments?: boolean;
   previousComposerText?: string;
+  refreshMessagesResult?: boolean;
 }) {
   const activeIdRef: { current: string | undefined } = { current: 'source' };
   const revisionDraftRef: { current: TurnRevisionDraft | null } = { current: null };
   const composerCalls: string[] = [];
   const opened: string[] = [];
-  const branchCalls: Array<[string, { sourceTurnId: string }]> = [];
+  const revisionCalls: Array<[string, { sourceTurnId: string }]> = [];
+  const removed: string[] = [];
   const infoToasts: Array<[string, string | undefined]> = [];
-  const restoreWindow = installWindow(async (sessionId, input) => {
-    branchCalls.push([sessionId, input]);
-    return options.branchBeforeTurn(sessionId, input);
-  });
+  const restoreWindow = installWindow(
+    async (sessionId, input) => {
+      revisionCalls.push([sessionId, input]);
+      return options.reviseBeforeTurn(sessionId, input);
+    },
+    async (sessionId) => { removed.push(sessionId); },
+  );
   const actions = createAppShellRevisionActions({
     uiLocale: 'en',
     activeIdRef,
@@ -97,6 +99,7 @@ function createHarness(options: {
         appendText: () => undefined,
         getText: () => options.previousComposerText ?? 'Previous draft',
         clearDraft: (key: string) => { composerCalls.push(`<clear:${key}>`); },
+        setDraft: (key: string, text: string) => { composerCalls.push(`<draft:${key}:${text}>`); },
         focus: () => { composerCalls.push('<focus>'); },
       },
     },
@@ -106,7 +109,7 @@ function createHarness(options: {
       opened.push(sessionId);
       activeIdRef.current = sessionId;
     },
-    refreshMessages: async () => true,
+    refreshMessages: async () => options.refreshMessagesResult ?? true,
     refreshSessions: async () => [],
     setMessages: () => undefined,
     commitRevisionDraft: (draft) => { revisionDraftRef.current = draft; },
@@ -120,38 +123,39 @@ function createHarness(options: {
   return {
     actions,
     activeIdRef,
-    branchCalls,
+    revisionCalls,
     composerCalls,
     infoToasts,
     opened,
+    removed,
     restoreWindow,
     revisionDraftRef,
   };
 }
 
 describe('app shell revision actions', () => {
-  it('starts a local draft and branches only when the edited text is sent', async () => {
-    const harness = createHarness({ branchBeforeTurn: async () => session('branch') });
+  it('starts a local draft and creates a version only when the edited text is sent', async () => {
+    const harness = createHarness({ reviseBeforeTurn: async () => session('revision') });
     try {
       harness.actions.beginEditUserMessage('turn-1');
-      assert.deepEqual(harness.branchCalls, []);
+      assert.deepEqual(harness.revisionCalls, []);
       assert.equal(harness.revisionDraftRef.current?.draftSessionId, 'source');
       assert.deepEqual(harness.composerCalls, ['Human-facing prompt', '<focus>']);
 
       assert.equal(await harness.actions.prepareRevisionSend('Edited prompt'), true);
-      assert.deepEqual(harness.branchCalls, [['source', { sourceTurnId: 'turn-1' }]]);
-      assert.deepEqual(harness.opened, ['branch']);
-      assert.equal(harness.revisionDraftRef.current?.draftSessionId, 'branch');
+      assert.deepEqual(harness.revisionCalls, [['source', { sourceTurnId: 'turn-1' }]]);
+      assert.deepEqual(harness.opened, ['revision']);
+      assert.equal(harness.revisionDraftRef.current?.draftSessionId, 'revision');
       assert.deepEqual(
         harness.composerCalls,
-        ['Human-facing prompt', '<focus>', 'Edited prompt', '<focus>'],
+        ['Human-facing prompt', '<focus>', '<draft:revision:Edited prompt>', '<focus>'],
       );
     } finally {
       harness.restoreWindow();
     }
   });
 
-  it('refuses source and retained attachment history before creating a lossy branch', () => {
+  it('refuses source and retained attachment history before creating a lossy revision', () => {
     const attachment = {
       kind: 'image' as const,
       name: 'source.png',
@@ -164,12 +168,12 @@ describe('app shell revision actions', () => {
         userMessage({ turnId: 'turn-0', attachments: [attachment] }),
         userMessage({ id: 'message-2', turnId: 'turn-1', ts: 2 }),
       ],
-      branchBeforeTurn: async () => session('branch'),
+      reviseBeforeTurn: async () => session('revision'),
     });
     try {
       harness.actions.beginEditUserMessage('turn-1');
       assert.equal(harness.revisionDraftRef.current, null);
-      assert.deepEqual(harness.branchCalls, []);
+      assert.deepEqual(harness.revisionCalls, []);
       assert.equal(harness.infoToasts[0]?.[0], 'This message cannot be edited yet');
     } finally {
       harness.restoreWindow();
@@ -179,7 +183,7 @@ describe('app shell revision actions', () => {
   it('refuses transformed prompts and a composer that already owns attachments', () => {
     const transformed = createHarness({
       messages: [userMessage({ text: '<invoked-skill>hidden</invoked-skill>', displayText: '/skill prompt' })],
-      branchBeforeTurn: async () => session('branch'),
+      reviseBeforeTurn: async () => session('revision'),
     });
     try {
       transformed.actions.beginEditUserMessage('turn-1');
@@ -190,7 +194,7 @@ describe('app shell revision actions', () => {
 
     const pending = createHarness({
       pendingAttachments: true,
-      branchBeforeTurn: async () => session('branch'),
+      reviseBeforeTurn: async () => session('revision'),
     });
     try {
       pending.actions.beginEditUserMessage('turn-1');
@@ -200,32 +204,52 @@ describe('app shell revision actions', () => {
     }
   });
 
-  it('does not steal focus when navigation wins a pending branch creation', async () => {
-    let resolveBranch: ((value: SessionSummary) => void) | undefined;
-    const branchPromise = new Promise<SessionSummary>((resolve) => { resolveBranch = resolve; });
-    const harness = createHarness({ branchBeforeTurn: async () => branchPromise });
+  it('does not steal focus when navigation wins a pending revision creation', async () => {
+    let resolveRevision: ((value: SessionSummary) => void) | undefined;
+    const revisionPromise = new Promise<SessionSummary>((resolve) => { resolveRevision = resolve; });
+    const harness = createHarness({ reviseBeforeTurn: async () => revisionPromise });
     try {
       harness.actions.beginEditUserMessage('turn-1');
       const pending = harness.actions.prepareRevisionSend('Edited prompt');
       await Promise.resolve();
       harness.activeIdRef.current = 'another-session';
-      resolveBranch?.(session('branch'));
+      resolveRevision?.(session('revision'));
       assert.equal(await pending, false);
       assert.deepEqual(harness.opened, []);
+      assert.deepEqual(harness.removed, ['revision']);
+    } finally {
+      harness.restoreWindow();
+    }
+  });
+
+  it('rolls back an empty version when its copied history cannot load', async () => {
+    const harness = createHarness({
+      reviseBeforeTurn: async () => session('revision'),
+      refreshMessagesResult: false,
+    });
+    try {
+      harness.actions.beginEditUserMessage('turn-1');
+      assert.equal(await harness.actions.prepareRevisionSend('Edited prompt'), false);
+      assert.equal(harness.activeIdRef.current, 'source');
+      assert.equal(harness.revisionDraftRef.current?.draftSessionId, 'source');
+      assert.deepEqual(harness.removed, ['revision']);
+      assert.ok(harness.composerCalls.includes('<draft:source:Edited prompt>'));
+      assert.deepEqual(harness.composerCalls.slice(-2), ['Edited prompt', '<focus>']);
     } finally {
       harness.restoreWindow();
     }
   });
 
   it('cancels back to the source and restores its previous draft', async () => {
-    const harness = createHarness({ branchBeforeTurn: async () => session('branch') });
+    const harness = createHarness({ reviseBeforeTurn: async () => session('revision') });
     try {
       harness.actions.beginEditUserMessage('turn-1');
       await harness.actions.prepareRevisionSend('Edited prompt');
       await harness.actions.cancelRevisionDraft();
       assert.equal(harness.revisionDraftRef.current, null);
-      assert.deepEqual(harness.opened, ['branch', 'source']);
-      assert.ok(harness.composerCalls.includes('<clear:branch>'));
+      assert.deepEqual(harness.opened, ['revision', 'source']);
+      assert.deepEqual(harness.removed, ['revision']);
+      assert.ok(harness.composerCalls.includes('<clear:revision>'));
       assert.deepEqual(harness.composerCalls.slice(-2), ['Previous draft', '<focus>']);
     } finally {
       harness.restoreWindow();

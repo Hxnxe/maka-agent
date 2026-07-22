@@ -41,6 +41,7 @@ import type {
   BranchFromTurnInput,
   CapabilitySnapshotCollection,
   RegenerateTurnInput,
+  ReviseBeforeTurnInput,
   TurnRecord,
   PermissionSnapshot,
   OpenGatewayRuntimeStatus,
@@ -199,7 +200,7 @@ export interface MakaBridge {
     >;
     regenerateTurn(sessionId: string, input: RegenerateTurnInput): Promise<void>;
     branchFromTurn(sessionId: string, input: BranchFromTurnInput): Promise<SessionSummary>;
-    branchBeforeTurn(sessionId: string, input: BranchFromTurnInput): Promise<SessionSummary>;
+    reviseBeforeTurn(sessionId: string, input: ReviseBeforeTurnInput): Promise<SessionSummary>;
     respondToPermission(sessionId: string, response: PermissionResponse): Promise<void>;
     respondToUserQuestion(sessionId: string, response: UserQuestionResponse): Promise<void>;
     saveConversationToFile(input: {
@@ -210,10 +211,10 @@ export interface MakaBridge {
     >;
     subscribeEvents(sessionId: string, handler: (event: SessionEvent) => void): () => void;
     subscribeChanges(handler: (event: SessionChangedEvent) => void): () => void;
-    archive(sessionId: string): Promise<void>;
-    unarchive(sessionId: string): Promise<void>;
-    setFlagged(sessionId: string, isFlagged: boolean): Promise<void>;
-    rename(sessionId: string, name: string): Promise<void>;
+    archive(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void>;
+    unarchive(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void>;
+    setFlagged(sessionId: string, isFlagged: boolean, options?: { revisionFamily?: boolean }): Promise<void>;
+    rename(sessionId: string, name: string, options?: { revisionFamily?: boolean }): Promise<void>;
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<SessionSummary>;
     setCollaborationMode(sessionId: string, mode: CollaborationMode): Promise<SessionSummary>;
     getPlanState(sessionId: string): Promise<PlanSessionState>;
@@ -235,7 +236,7 @@ export interface MakaBridge {
     abandonPlanExecution(sessionId: string, executionId: string): Promise<PlanSessionState>;
     setModel(sessionId: string, input: { llmConnectionSlug: string; model: string }): Promise<SessionSummary>;
     setThinkingLevel(sessionId: string, level: ThinkingLevel | undefined | null): Promise<SessionSummary>;
-    remove(sessionId: string): Promise<void>;
+    remove(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void>;
   };
   shellRuns: {
     list(sessionId: string): Promise<ShellRunUpdate[]>;

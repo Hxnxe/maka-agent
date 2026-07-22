@@ -105,6 +105,16 @@ export interface SessionHeader {
   statusUpdatedAt?: number;
   parentSessionId?: string;
   branchOfTurnId?: string;
+  /** Stable root id for an edit-and-resend version family. */
+  revisionRootSessionId?: string;
+  /** Immediate previous version in the same conversation slot. */
+  revisionParentSessionId?: string;
+  /** User turn replaced when this revision was created. */
+  revisionOfTurnId?: string;
+  /** Stable display order inside the revision family; root is implicitly 1. */
+  revisionIndex?: number;
+  /** Preparing versions are hidden after restart until their first run starts. */
+  revisionState?: 'preparing' | 'committed';
 
   // Unread tracking
   lastReadMessageId?: string;
@@ -146,6 +156,11 @@ export interface SessionSummary {
   statusUpdatedAt?: number;
   parentSessionId?: string;
   branchOfTurnId?: string;
+  revisionRootSessionId?: string;
+  revisionParentSessionId?: string;
+  revisionOfTurnId?: string;
+  revisionIndex?: number;
+  revisionState?: 'preparing' | 'committed';
   backend: BackendKind;
   llmConnectionSlug: string;
   /**

@@ -510,9 +510,17 @@ export type {
   ChildAgentTurnInput,
   CreateSessionInput,
   RegenerateTurnInput,
+  ReviseBeforeTurnInput,
   UserMessageInput,
   SessionListFilter,
 } from './runtime-inputs.js';
+
+export {
+  collapseSessionRevisions,
+  revisionFamilySessionIds,
+  sessionRevisionFamilyId,
+  visibleSessionRevisionMembers,
+} from './session-revisions.js';
 
 // e2e-fixture.ts
 export type {

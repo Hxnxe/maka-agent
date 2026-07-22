@@ -5,7 +5,10 @@ import {
   ArrowDown,
   ArrowRight,
   BookOpen,
+  ChevronLeft,
+  ChevronRight,
   GitBranch,
+  History,
   Target,
   Sparkles,
 } from './icons.js';
@@ -173,6 +176,14 @@ export function ChatView(props: {
     fromAbortedTurn?: boolean;
   };
   onBranchBannerClick?: (parentSessionId: string) => void;
+  /** Edit-and-resend versions stay in one conversation slot. */
+  revisionNavigation?: {
+    current: number;
+    total: number;
+    previousSessionId?: string;
+    nextSessionId?: string;
+  };
+  onRevisionNavigate?: (sessionId: string) => void;
   /**
    * Host reader for image attachment bytes, threaded to each turn's user-message
    * thumbnails. The desktop shell passes its preload `attachments.readBytes`;
@@ -416,6 +427,12 @@ export function ChatView(props: {
         />
       )}
       <div className="maka-chat-shell">
+        {props.revisionNavigation && (
+          <SessionRevisionNavigator
+            navigation={props.revisionNavigation}
+            onNavigate={props.onRevisionNavigate}
+          />
+        )}
         {props.branchBanner && (
           <SessionBranchBanner
             banner={props.branchBanner}
@@ -662,6 +679,51 @@ export function DeepResearchProgressPanel({
  * when the active session has `parentSessionId` set. Click jumps the
  * user back to the parent session.
  */
+function SessionRevisionNavigator(props: {
+  navigation: {
+    current: number;
+    total: number;
+    previousSessionId?: string;
+    nextSessionId?: string;
+  };
+  onNavigate?: (sessionId: string) => void;
+}) {
+  const copy = getConversationCopy(useUiLocale()).chat;
+  const { navigation } = props;
+  return (
+    <div
+      className="maka-session-revision-nav"
+      role="toolbar"
+      aria-label={copy.revisionVersionsAriaLabel}
+    >
+      <History size={12} aria-hidden="true" />
+      <span>{copy.revisionVersion(navigation.current, navigation.total)}</span>
+      <BaseButton
+        type="button"
+        className="maka-session-revision-nav-action"
+        disabled={!navigation.previousSessionId}
+        aria-label={copy.previousRevision}
+        onClick={() => {
+          if (navigation.previousSessionId) props.onNavigate?.(navigation.previousSessionId);
+        }}
+      >
+        <ChevronLeft size={13} aria-hidden="true" />
+      </BaseButton>
+      <BaseButton
+        type="button"
+        className="maka-session-revision-nav-action"
+        disabled={!navigation.nextSessionId}
+        aria-label={copy.nextRevision}
+        onClick={() => {
+          if (navigation.nextSessionId) props.onNavigate?.(navigation.nextSessionId);
+        }}
+      >
+        <ChevronRight size={13} aria-hidden="true" />
+      </BaseButton>
+    </div>
+  );
+}
+
 function SessionBranchBanner(props: {
   banner: {
     parentSessionId: string;

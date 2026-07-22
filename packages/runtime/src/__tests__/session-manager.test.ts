@@ -9931,10 +9931,46 @@ describe('SessionManager permission mode updates', () => {
         }),
       ],
     );
+    await seedRuntimeRun(
+      runStore,
+      makeRunHeader({
+        sessionId: parent.id,
+        runId: 'later-run',
+        turnId: 'later',
+        status: 'completed',
+        createdAt: 5,
+        updatedAt: 6,
+        completedAt: 6,
+      }),
+      [
+        runtimeEvent({
+          id: 'later-user',
+          sessionId: parent.id,
+          runId: 'later-run',
+          turnId: 'later',
+          ts: 5,
+          role: 'user',
+          author: 'user',
+          content: { kind: 'text', text: 'later' },
+        }),
+        runtimeEvent({
+          id: 'later-complete',
+          sessionId: parent.id,
+          runId: 'later-run',
+          turnId: 'later',
+          ts: 6,
+          role: 'system',
+          author: 'system',
+          status: 'completed',
+          actions: { endInvocation: true },
+        }),
+      ],
+    );
     const child = await manager.branchFromTurn(parent.id, {
       sourceTurnId: 'source',
       name: 'Child',
     });
+    const revision = await manager.reviseBeforeTurn(parent.id, { sourceTurnId: 'later' });
 
     const updates = await manager.listShellRunUpdates(child.id);
 
@@ -9947,6 +9983,15 @@ describe('SessionManager permission mode updates', () => {
     });
     expect(updates[0]?.sourceToolCallId).toBe('bash-1');
     expect(updates[0]?.result).toEqual(sourceSnapshot);
+
+    const revisionUpdates = await manager.listShellRunUpdates(revision.id);
+    expect(revisionUpdates).toHaveLength(1);
+    expect(revisionUpdates[0]?.ownership).toEqual({
+      kind: 'source_owned',
+      sourceSessionId: parent.id,
+      ownerSessionId: parent.id,
+    });
+    expect(revisionUpdates[0]?.result).toEqual(sourceSnapshot);
 
     ownerAvailable = false;
     await store.remove(parent.id);
@@ -10072,6 +10117,97 @@ describe('SessionManager permission mode updates', () => {
     expect((await store.readMessages(child.id)).some((message) => message.type === 'user')).toBe(
       true,
     );
+  });
+
+  test('reviseBeforeTurn creates an in-conversation version without ordinary branch lineage', async () => {
+    const store = new MemorySessionStore();
+    const runStore = new MemoryAgentRunStore();
+    const backends = new BackendRegistry();
+    backends.register(
+      'fake',
+      (ctx) => new EventBackend(ctx, [{ type: 'complete', stopReason: 'end_turn' }]),
+    );
+    const manager = new SessionManager({
+      store,
+      runStore,
+      runtimeEventStore: runStore,
+      backends,
+      newId: nextId(),
+      now: nextNow(16_700),
+    });
+    const session = await manager.createSession(makeInput({ name: 'Conversation' }));
+    await manager.setFlagged(session.id, true);
+    await drain(manager.sendMessage(session.id, { turnId: 'first', text: 'keep me' }));
+    await drain(manager.sendMessage(session.id, { turnId: 'second', text: 'replace me' }));
+
+    const version2 = await manager.reviseBeforeTurn(session.id, { sourceTurnId: 'second' });
+
+    expect(version2.name).toBe('Conversation');
+    expect(version2.isFlagged).toBe(true);
+    expect(version2.parentSessionId).toBeUndefined();
+    expect(version2.branchOfTurnId).toBeUndefined();
+    expect(version2.revisionRootSessionId).toBe(session.id);
+    expect(version2.revisionParentSessionId).toBe(session.id);
+    expect(version2.revisionOfTurnId).toBe('second');
+    expect(version2.revisionIndex).toBe(2);
+    expect(version2.revisionState).toBe('preparing');
+    await drain(
+      manager.sendMessage(
+        version2.id,
+        { turnId: 'edited-second', text: 'replacement' },
+        { onRunStarted: async () => { await manager.commitRevisionVersion(version2.id); } },
+      ),
+    );
+    expect((await store.readHeader(version2.id)).revisionState).toBe('committed');
+    const messages = await store.readMessages(version2.id);
+    expect(messages.some((message) => (message as { turnId?: string }).turnId === 'first')).toBe(true);
+    expect(messages.some((message) => (message as { turnId?: string }).turnId === 'second')).toBe(false);
+
+    const version3 = await manager.reviseBeforeTurn(version2.id, { sourceTurnId: 'first' });
+    expect(version3.revisionRootSessionId).toBe(session.id);
+    expect(version3.revisionParentSessionId).toBe(version2.id);
+    expect(version3.revisionIndex).toBe(3);
+    expect(version3.revisionState).toBe('preparing');
+    expect(version3.parentSessionId).toBeUndefined();
+  });
+
+  test('startup recovery removes empty preparing revisions and commits admitted edits', async () => {
+    const store = new MemorySessionStore();
+    const runStore = new MemoryAgentRunStore();
+    const backends = new BackendRegistry();
+    backends.register(
+      'fake',
+      (ctx) => new EventBackend(ctx, [{ type: 'complete', stopReason: 'end_turn' }]),
+    );
+    const manager = new SessionManager({
+      store,
+      runStore,
+      runtimeEventStore: runStore,
+      backends,
+      newId: nextId(),
+      now: nextNow(16_900),
+    });
+    const root = await manager.createSession(makeInput({ name: 'Recovery root' }));
+    await drain(manager.sendMessage(root.id, { turnId: 'first', text: 'original' }));
+
+    const empty = await manager.reviseBeforeTurn(root.id, { sourceTurnId: 'first' });
+    expect(empty.revisionState).toBe('preparing');
+    await manager.recoverInterruptedSessions();
+    let removedError: unknown;
+    try {
+      await store.readHeader(empty.id);
+    } catch (error) {
+      removedError = error;
+    }
+    expect(removedError instanceof Error ? removedError.message : String(removedError)).toContain(
+      'Unknown session',
+    );
+
+    const admitted = await manager.reviseBeforeTurn(root.id, { sourceTurnId: 'first' });
+    await drain(manager.sendMessage(admitted.id, { turnId: 'edited', text: 'edited prompt' }));
+    expect((await store.readHeader(admitted.id)).revisionState).toBe('preparing');
+    await manager.recoverInterruptedSessions();
+    expect((await store.readHeader(admitted.id)).revisionState).toBe('committed');
   });
 
   test('branchBeforeTurn rejects an unknown turn', async () => {
@@ -12491,6 +12627,15 @@ class MemorySessionStore implements SessionStore {
       statusUpdatedAt: 1,
       ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
       ...(input.branchOfTurnId ? { branchOfTurnId: input.branchOfTurnId } : {}),
+      ...(input.revisionRootSessionId
+        ? { revisionRootSessionId: input.revisionRootSessionId }
+        : {}),
+      ...(input.revisionParentSessionId
+        ? { revisionParentSessionId: input.revisionParentSessionId }
+        : {}),
+      ...(input.revisionOfTurnId ? { revisionOfTurnId: input.revisionOfTurnId } : {}),
+      ...(input.revisionIndex !== undefined ? { revisionIndex: input.revisionIndex } : {}),
+      ...(input.revisionState ? { revisionState: input.revisionState } : {}),
       hasUnread: false,
       backend: input.backend,
       llmConnectionSlug: input.llmConnectionSlug,

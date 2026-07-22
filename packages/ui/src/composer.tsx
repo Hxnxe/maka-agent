@@ -58,6 +58,8 @@ export interface ComposerHandle {
   getText(): string;
   /** Clear one persisted draft without affecting a different active session. */
   clearDraft(draftKey: string): void;
+  /** Write a specific session draft before navigation changes the active key. */
+  setDraft(draftKey: string, text: string): void;
   /** Move focus to the textarea without changing its content. */
   focus(): void;
 }
@@ -222,7 +224,7 @@ export const Composer = forwardRef<
   // (issue #1044). `resetPromptHistoryNavigation` is a hoisted wrapper so the
   // draft hook's swap effect can reset history navigation even though the
   // history hook is created one line below it.
-  const { hasDraftText, saveCurrentDraft, clearDraft, activeDraftKey } = useComposerDraft({
+  const { hasDraftText, saveCurrentDraft, clearDraft, setDraft, activeDraftKey } = useComposerDraft({
     textareaRef,
     draftKey: props.draftKey,
     autoResize,
@@ -314,6 +316,16 @@ export const Composer = forwardRef<
         if (el) el.value = '';
         saveCurrentDraft('');
         autoResize();
+      },
+      setDraft(draftKey: string, text: string) {
+        setDraft(draftKey, text);
+        if (activeDraftKey() !== draftKey) return;
+        const el = textareaRef.current;
+        if (!el) return;
+        resetPromptHistoryNavigation();
+        el.value = text;
+        autoResize();
+        focusTextInputAtEnd(el);
       },
       focus() {
         textareaRef.current?.focus();

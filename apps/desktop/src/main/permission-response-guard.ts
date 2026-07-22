@@ -2,6 +2,7 @@ import type {
   BranchFromTurnInput,
   PermissionResponse,
   RegenerateTurnInput,
+  ReviseBeforeTurnInput,
   UserQuestionResponse,
 } from '@maka/core';
 
@@ -82,6 +83,17 @@ export function normalizeBranchFromTurnInput(input: unknown): BranchFromTurnInpu
   return {
     sourceTurnId: normalizeRequiredString(value.sourceTurnId, 'Invalid branch sourceTurnId', MAX_TURN_ID_LENGTH),
     ...(name ? { name } : {}),
+  };
+}
+
+export function normalizeReviseBeforeTurnInput(input: unknown): ReviseBeforeTurnInput {
+  const value = requireObject(input, 'Invalid revision turn input');
+  return {
+    sourceTurnId: normalizeRequiredString(
+      value.sourceTurnId,
+      'Invalid revision sourceTurnId',
+      MAX_TURN_ID_LENGTH,
+    ),
   };
 }
 

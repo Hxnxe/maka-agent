@@ -252,6 +252,10 @@ export interface ConversationCopy {
     noMessages: string;
     branchTitle: (name: string, beforeAbort: boolean) => string;
     branchLabel: (name: string, beforeAbort: boolean) => string;
+    revisionVersionsAriaLabel: string;
+    revisionVersion: (current: number, total: number) => string;
+    previousRevision: string;
+    nextRevision: string;
   };
   sessions: {
     status: Record<SessionStatus, string>;
@@ -391,6 +395,7 @@ const CONVERSATION_COPY = {
       clearGoal: (condition, iteration, max, status) => `自主执行目标进行中：「${condition}」（第 ${iteration}/${max} 轮，${status}）。系统每轮后自动续行；点击可清除目标、停止续行。`, clearGoalAriaLabel: (iteration, max) => `清除自主执行目标（已进行 ${iteration}/${max} 轮）`, goalLabel: (iteration, max) => `目标 ${iteration}/${max} · 清除`,
       loadFailed: '对话载入失败', loading: '载入中…', retryLoad: '重试载入', jumpLatest: '跳到最新消息', noMessages: '暂无消息',
       branchTitle: (name, beforeAbort) => beforeAbort ? `从中断前分支自 ${name} · 点击跳回原会话` : `分自 ${name} · 点击跳回原会话`, branchLabel: (name, beforeAbort) => beforeAbort ? `从中断前分支自 ${name}` : `分自 ${name}`,
+      revisionVersionsAriaLabel: '对话版本', revisionVersion: (current, total) => `版本 ${current} / ${total}`, previousRevision: '查看上一版本', nextRevision: '查看下一版本',
     },
     sessions: {
       status: { active: '可继续', running: '进行中', waiting_for_user: '等你确认', blocked: '需要处理', review: '待审核', done: '已完成', archived: '已归档', aborted: '已中止' },
@@ -524,6 +529,7 @@ const CONVERSATION_COPY = {
       clearGoal: (condition, iteration, max, status) => `Autonomous goal in progress: “${condition}” (iteration ${iteration}/${max}, ${status}). Maka continues after each iteration; click to clear the goal and stop continuing.`, clearGoalAriaLabel: (iteration, max) => `Clear autonomous goal after ${iteration}/${max} iterations`, goalLabel: (iteration, max) => `Goal ${iteration}/${max} · Clear`,
       loadFailed: 'Conversation failed to load', loading: 'Loading…', retryLoad: 'Retry', jumpLatest: 'Jump to latest message', noMessages: 'No messages yet',
       branchTitle: (name, beforeAbort) => beforeAbort ? `Branched before interruption from ${name} · Click to return` : `Branched from ${name} · Click to return`, branchLabel: (name, beforeAbort) => beforeAbort ? `Branched before interruption from ${name}` : `Branched from ${name}`,
+      revisionVersionsAriaLabel: 'Conversation versions', revisionVersion: (current, total) => `Version ${current} of ${total}`, previousRevision: 'View previous version', nextRevision: 'View next version',
     },
     sessions: {
       status: { active: 'Ready', running: 'Running', waiting_for_user: 'Waiting for you', blocked: 'Needs attention', review: 'Review', done: 'Done', archived: 'Archived', aborted: 'Stopped' },

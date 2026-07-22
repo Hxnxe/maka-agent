@@ -599,7 +599,6 @@
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
-  cursor: pointer;
   transition: background-color var(--duration-base) var(--ease-out-strong), color var(--duration-base) var(--ease-out-strong);
 }
 

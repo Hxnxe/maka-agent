@@ -7,7 +7,7 @@ import { readRendererShellSource } from './renderer-shell-source-helpers.js';
 const REPO_ROOT = resolve(import.meta.dirname, '../../../../..');
 
 describe('session revision (edit-and-resend) contract', () => {
-  it('edits locally, then lazily prepares a before-turn branch on send', async () => {
+  it('edits locally, then lazily prepares an in-conversation version on send', async () => {
     const source = await readRendererShellSource('app-shell-revision-actions.ts');
     assert.match(source, /function beginEditUserMessage\(turnId: string\): void/);
     assert.match(source, /userFacingText\(userMessage\)/);
@@ -15,7 +15,7 @@ describe('session revision (edit-and-resend) contract', () => {
     assert.match(source, /async function prepareRevisionSend\(text: string\)/);
     assert.match(
       source,
-      /branchBeforeTurn\(sourceSessionId, \{\s*sourceTurnId: draft\.sourceTurnId/,
+      /reviseBeforeTurn\(sourceSessionId, \{\s*sourceTurnId: draft\.sourceTurnId/,
     );
     assert.match(source, /revisionDraftRef\.current !== draft/);
     assert.match(source, /retainedAttachmentTurn/);
@@ -27,6 +27,7 @@ describe('session revision (edit-and-resend) contract', () => {
 
   it('wires revision ownership through the shell and composer', async () => {
     const shell = await readRendererShellSource('app-shell.tsx');
+    const source = await readRendererShellSource('app-shell-revision-actions.ts');
     assert.match(
       shell,
       /onEditUserMessage=\{\(turnId\) => \{ void beginEditUserMessage\(turnId\); \}\}/,
@@ -38,7 +39,14 @@ describe('session revision (edit-and-resend) contract', () => {
     );
     assert.match(shell, /composerRef\.current\?\.clearDraft\(expectedRevisionSessionId\)/);
     assert.match(shell, /cancelRevisionDraft/);
-    assert.doesNotMatch(shell, /queueMicrotask\(refillRevisionComposer\)/);
+    assert.match(
+      shell,
+      /if \(source && owner && !source\.isArchived && !owner\.isArchived\) return;[\s\S]*commitRevisionDraft\(null\)/,
+    );
+    assert.match(source, /composerRef\.current\?\.setDraft\(newSession\.id, text\)/);
+    assert.doesNotMatch(source, /requestAnimationFrame/);
+    const rowActions = await readRendererShellSource('app-shell-session-row-actions.ts');
+    assert.match(rowActions, /revisionFamily: true/);
 
     const composer = await readFile(resolve(REPO_ROOT, 'packages/ui/src/composer.tsx'), 'utf8');
     assert.match(composer, /if \(activeDraftKey\(\) !== submittedDraftKey\) return;/);
@@ -65,14 +73,24 @@ describe('session revision (edit-and-resend) contract', () => {
     assert.match(view, /streamingActive \|\| props\.activeSession\?\.status === 'running'/);
   });
 
-  it('exposes branchBeforeTurn on the preload bridge', async () => {
+  it('commits a preparing revision only when its first run starts', async () => {
+    const main = await readFile(resolve(REPO_ROOT, 'apps/desktop/src/main/sessions-ipc-main.ts'), 'utf8');
+    assert.match(
+      main,
+      /onRunStarted: async \(_runId, header\) => \{[\s\S]*header\.revisionState === 'preparing'[\s\S]*commitRevisionVersion\(sessionId\)/,
+    );
+  });
+
+  it('exposes reviseBeforeTurn on the preload bridge', async () => {
     const preload = await readFile(resolve(REPO_ROOT, 'apps/desktop/src/preload/preload.ts'), 'utf8');
     const bridge = await readFile(
       resolve(REPO_ROOT, 'apps/desktop/src/preload/bridge-contract.d.ts'),
       'utf8',
     );
-    assert.match(preload, /branchBeforeTurn\(sessionId: string, input: BranchFromTurnInput\)/);
-    assert.match(preload, /sessions:branchBeforeTurn/);
-    assert.match(bridge, /branchBeforeTurn\(sessionId: string, input: BranchFromTurnInput\)/);
+    assert.match(preload, /reviseBeforeTurn\(sessionId: string, input: ReviseBeforeTurnInput\)/);
+    assert.match(preload, /sessions:reviseBeforeTurn/);
+    assert.match(bridge, /reviseBeforeTurn\(sessionId: string, input: ReviseBeforeTurnInput\)/);
+    assert.doesNotMatch(preload, /branchBeforeTurn/);
+    assert.doesNotMatch(bridge, /branchBeforeTurn/);
   });
 });

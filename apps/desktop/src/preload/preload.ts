@@ -53,6 +53,7 @@ import type {
   BranchFromTurnInput,
   CapabilitySnapshotCollection,
   RegenerateTurnInput,
+  ReviseBeforeTurnInput,
   TurnRecord,
   PermissionSnapshot,
   OpenGatewayRuntimeStatus,
@@ -175,8 +176,8 @@ const makaBridge = {
     branchFromTurn(sessionId: string, input: BranchFromTurnInput): Promise<SessionSummary> {
       return ipcRenderer.invoke('sessions:branchFromTurn', sessionId, input);
     },
-    branchBeforeTurn(sessionId: string, input: BranchFromTurnInput): Promise<SessionSummary> {
-      return ipcRenderer.invoke('sessions:branchBeforeTurn', sessionId, input);
+    reviseBeforeTurn(sessionId: string, input: ReviseBeforeTurnInput): Promise<SessionSummary> {
+      return ipcRenderer.invoke('sessions:reviseBeforeTurn', sessionId, input);
     },
     respondToPermission(sessionId: string, response: PermissionResponse): Promise<void> {
       return ipcRenderer.invoke('sessions:respondToPermission', sessionId, response);
@@ -209,17 +210,17 @@ const makaBridge = {
       ipcRenderer.on('sessions:changed', listener);
       return () => ipcRenderer.off('sessions:changed', listener);
     },
-    archive(sessionId: string): Promise<void> {
-      return ipcRenderer.invoke('sessions:archive', sessionId);
+    archive(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void> {
+      return ipcRenderer.invoke('sessions:archive', sessionId, options);
     },
-    unarchive(sessionId: string): Promise<void> {
-      return ipcRenderer.invoke('sessions:unarchive', sessionId);
+    unarchive(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void> {
+      return ipcRenderer.invoke('sessions:unarchive', sessionId, options);
     },
-    setFlagged(sessionId: string, isFlagged: boolean): Promise<void> {
-      return ipcRenderer.invoke('sessions:setFlagged', sessionId, isFlagged);
+    setFlagged(sessionId: string, isFlagged: boolean, options?: { revisionFamily?: boolean }): Promise<void> {
+      return ipcRenderer.invoke('sessions:setFlagged', sessionId, isFlagged, options);
     },
-    rename(sessionId: string, name: string): Promise<void> {
-      return ipcRenderer.invoke('sessions:rename', sessionId, name);
+    rename(sessionId: string, name: string, options?: { revisionFamily?: boolean }): Promise<void> {
+      return ipcRenderer.invoke('sessions:rename', sessionId, name, options);
     },
     setPermissionMode(sessionId: string, mode: PermissionMode): Promise<SessionSummary> {
       return ipcRenderer.invoke('sessions:setPermissionMode', sessionId, mode);
@@ -262,8 +263,8 @@ const makaBridge = {
     setThinkingLevel(sessionId: string, level: ThinkingLevel | undefined | null): Promise<SessionSummary> {
       return ipcRenderer.invoke('sessions:setThinkingLevel', sessionId, level ?? undefined);
     },
-    remove(sessionId: string): Promise<void> {
-      return ipcRenderer.invoke('sessions:remove', sessionId);
+    remove(sessionId: string, options?: { revisionFamily?: boolean }): Promise<void> {
+      return ipcRenderer.invoke('sessions:remove', sessionId, options);
     },
   },
   shellRuns: {

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { wireAppLifecycle } from './app-lifecycle.js';
 import {
+  collapseSessionRevisions,
   DEFAULT_SESSION_NAME,
   filterModelVisibleTaskLedgerTasks,
   DEEP_RESEARCH_SESSION_LABEL,
@@ -521,7 +522,7 @@ const deepResearchTools = buildDeepResearchTools({
 });
 const openGateway = new OpenGatewayService({
   getSettings: () => settingsStore.get(),
-  listSessions: () => runtime.listSessions(),
+  listSessions: async () => collapseSessionRevisions(await runtime.listSessions()),
   readMessages: (sessionId) => runtime.getMessages(sessionId),
   sendMessage: async (sessionId, input) => {
     await ensureSessionCanSend(sessionId);
@@ -799,7 +800,7 @@ const dailyReview = createDailyReviewMainService({
   archiveStore: dailyReviewArchiveStore,
   connectionStore,
   telemetryRepo,
-  listSessions: () => runtime.listSessions(),
+  listSessions: async () => collapseSessionRevisions(await runtime.listSessions()),
   resolveConnectionSecret,
   buildSubscriptionModelFetch,
 });

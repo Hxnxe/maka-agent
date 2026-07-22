@@ -13,6 +13,7 @@ const sourcePaths = [
   'app-shell-daily-review-actions.ts',
   'app-shell-turn-actions.ts',
   'app-shell-revision-actions.ts',
+  'session-revisions.ts',
   'app-shell-turn-view-model.ts',
   'app-shell.tsx',
   'app-shell-chrome-actions.tsx',

@@ -66,6 +66,10 @@ import type { LlmConnection } from '@maka/core/llm-connections';
 import type { RuntimeEvent } from '@maka/core/runtime-event';
 import type { ToolPermissionRule } from '@maka/core/permission';
 import type { UserQuestionResponse } from '@maka/core/user-question';
+import {
+  resolveEffectiveOrchestration,
+  type EffectiveOrchestration,
+} from '@maka/core/orchestration';
 import type { PlanToolResult } from './plan-tools.js';
 import type { AttachmentByteReader } from '@maka/core/attachments';
 import {
@@ -99,6 +103,7 @@ import {
   type MakaTool,
   type MakaToolContext,
   type AgentTeamExecutionContext,
+  type ToolRuntimeInput,
   type ToolModelOutput,
 } from './tool-runtime.js';
 import type { RuntimeCommitSink } from './runtime-commit-sink.js';
@@ -166,6 +171,7 @@ import {
   type ProviderRequestCaptureRecord,
 } from './provider-request-telemetry.js';
 import { ToolAvailabilityRuntime, type ToolAvailabilityConfig } from './tool-availability.js';
+import { renderSwarmModePrompt } from './swarm-mode.js';
 import {
   applyRuntimeEventContextBudget,
   buildContextBudgetDiagnosticShell,
@@ -536,6 +542,8 @@ export interface AiSdkBackendInput {
     }) => void | Promise<void>;
     onEvent?: (event: SessionEvent) => void;
   }) => Promise<unknown>;
+  prepareChildAgentResume?: ToolRuntimeInput['prepareChildAgentResume'];
+  resumeChildAgent?: ToolRuntimeInput['resumeChildAgent'];
   listChildAgents?: () => Promise<unknown>;
   readChildAgentOutput?: (input: {
     runId?: string;
@@ -679,6 +687,7 @@ export class AiSdkBackend implements AgentBackend {
    */
   private injectedSteeringMessages: ModelMessage[] = [];
   private currentRunId: string | null = null;
+  private currentOrchestration: EffectiveOrchestration | undefined;
   private imageRequestBudget: { used: number; decisions: Map<string, boolean> } | null = null;
   /** Side-channel for tool.execute() callbacks to push events into the iterator. */
   private currentQueue: AsyncEventQueue<SessionEvent> | null = null;
@@ -748,8 +757,11 @@ export class AiSdkBackend implements AgentBackend {
       getCurrentRunId: () => this.currentRunId ?? undefined,
       agentTeam: input.agentTeam,
       getCurrentStepId: () => this.currentStepMessageId ?? undefined,
+      getCurrentOrchestration: () => this.currentOrchestration,
       permissionRules: input.permissionRules,
       spawnChildAgent: input.spawnChildAgent,
+      prepareChildAgentResume: input.prepareChildAgentResume,
+      resumeChildAgent: input.resumeChildAgent,
       listChildAgents: input.listChildAgents,
       readChildAgentOutput: input.readChildAgentOutput,
       getRunTrace: () => this.currentRunTrace,
@@ -815,6 +827,9 @@ export class AiSdkBackend implements AgentBackend {
     this.currentTurnId = turnId;
     this.currentInvocationId = input.invocationId ?? input.runId ?? null;
     this.currentRunId = input.runId ?? null;
+    this.currentOrchestration =
+      input.orchestration ??
+      resolveEffectiveOrchestration(this.input.header.orchestrationMode, undefined);
     this.currentUserIntent = input.text;
     this.input.permissionEngine.beginTurn(turnId);
     this.toolRuntime.beginTurn(turnId);
@@ -927,7 +942,11 @@ export class AiSdkBackend implements AgentBackend {
       record: this.input.recordRunTrace,
     });
     this.currentRunTrace = trace;
-    trace.turnStarted();
+    trace.turnStarted({
+      orchestrationMode: this.currentOrchestration.mode,
+      orchestrationSource: this.currentOrchestration.source,
+      agentSwarmAuthorization: this.currentOrchestration.agentSwarmAuthorization,
+    });
     if (this.input.planTraceContext) {
       trace.emit('plan', 'plan_context_resolved', 'Plan context resolved', {
         ...this.input.planTraceContext,
@@ -985,6 +1004,7 @@ export class AiSdkBackend implements AgentBackend {
     // not committed yet) so a group loaded earlier stays advertised.
     const plan = this.toolAvailabilityRuntime.prepare(
       (input.runtimeContext ?? []).filter((event) => event.turnId !== turnId),
+      this.currentOrchestration.mode === 'swarm' ? new Set(['agent_swarm']) : new Set(),
     );
     const providerTools = plan.providerTools;
     let activeToolResultPruneDiagnosticPatch: ActiveToolResultPruneDiagnosticPatch = {};
@@ -1083,7 +1103,10 @@ export class AiSdkBackend implements AgentBackend {
         this.currentWatchdog = watchdog;
         watchdog.start();
         const activeTools = plan.activeTools;
-        const systemPrompt = await this.resolveSystemPrompt();
+        const systemPrompt = joinPromptFragments([
+          await this.resolveSystemPrompt(),
+          this.currentOrchestration?.mode === 'swarm' ? renderSwarmModePrompt() : undefined,
+        ]);
         const turnTailPrompt = input.continuation
           ? undefined
           : joinPromptFragments([
@@ -2866,6 +2889,7 @@ export class AiSdkBackend implements AgentBackend {
     this.currentTurnId = null;
     this.currentInvocationId = null;
     this.currentRunId = null;
+    this.currentOrchestration = undefined;
     this.currentRunTrace = null;
     this.currentUserIntent = undefined;
     this.currentStepMessageId = null;

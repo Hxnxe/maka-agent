@@ -23,6 +23,7 @@ export const AGENT_SWARM_TOOL_NAME = 'agent_swarm';
 export const AGENT_SWARM_DEFAULT_CONCURRENCY = 3;
 export const AGENT_SWARM_MAX_CONCURRENCY = 5;
 export const AGENT_SWARM_MAX_ITEMS = 32;
+export const AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER = '{{item}}';
 
 const AGENT_SWARM_WRITE_BACK_MODES = [AGENT_WRITE_BACK_SUMMARY, AGENT_WRITE_BACK_PATCH] as const;
 const AGENT_SWARM_ISOLATION_MODES = [
@@ -32,16 +33,37 @@ const AGENT_SWARM_ISOLATION_MODES = [
 const AGENT_SWARM_TASK_MAX_CHARS = 60_000;
 const AGENT_SWARM_ERROR_MAX_CHARS = 1_000;
 
-export interface AgentSwarmToolInput {
-  items: Array<{
-    item_id: string;
-    profile: string;
-    task: string;
-    write_back?: string;
-    isolation?: string;
-  }>;
+export interface AgentSwarmExplicitItemInput {
+  item_id: string;
+  profile: string;
+  task: string;
+  write_back?: string;
+  isolation?: string;
+}
+
+export interface AgentSwarmExplicitToolInput {
+  items: AgentSwarmExplicitItemInput[];
+  resume_run_ids?: Record<string, string>;
   max_concurrency?: number;
 }
+
+export interface AgentSwarmTemplateToolInput {
+  prompt_template: string;
+  profile: string;
+  items: string[];
+  resume_run_ids?: Record<string, string>;
+  max_concurrency?: number;
+}
+
+export interface AgentSwarmResumeToolInput {
+  resume_run_ids: Record<string, string>;
+  max_concurrency?: number;
+}
+
+export type AgentSwarmToolInput =
+  | AgentSwarmExplicitToolInput
+  | AgentSwarmTemplateToolInput
+  | AgentSwarmResumeToolInput;
 
 export type AgentSwarmToolResult = Extract<ToolResultContent, { kind: 'agent_swarm' }>;
 
@@ -51,6 +73,15 @@ interface PreparedAgentSwarmItem {
   readonly profile: string;
   readonly task: string;
   readonly definition: AgentDefinition;
+  readonly mode: 'spawn' | 'resume';
+  readonly resumedFromRunId?: string;
+}
+
+interface PendingAgentSwarmResume {
+  readonly index: number;
+  readonly itemId: string;
+  readonly sourceRunId: string;
+  readonly task: string;
 }
 
 interface StartedChildRef {
@@ -68,20 +99,30 @@ export function buildAgentSwarmTool(
     displayName: 'Agent Swarm',
     description: [
       'Run the same kind of bounded foreground child work over several independent items.',
+      `Provide either explicit structured items, or prompt_template with one shared profile and string items; every ${AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER} occurrence is replaced with the item value.`,
+      'Use resume_run_ids to continue terminal child AgentRuns by runId; resumed children are ordered before new items.',
       'Use this only when every item can run independently. Results return in input order; you remain responsible for semantic synthesis.',
     ].join(' '),
     parameters: agentSwarmInputSchema(),
     permissionRequired: true,
+    executionSemantics: 'exclusive_step',
     categoryHint: 'subagent',
     impl: async (input, ctx) => {
-      const prepared = preflightAgentSwarmInput(input);
-      if (!ctx.spawnChildAgent) {
+      const prepared = await prepareAgentSwarmInput(input, ctx);
+      if (prepared.items.some((item) => item.mode === 'spawn') && !ctx.spawnChildAgent) {
         throw new Error('spawnChildAgent capability is unavailable in this runtime context');
+      }
+      if (
+        prepared.items.some((item) => item.mode === 'resume') &&
+        (!ctx.prepareChildAgentResume || !ctx.resumeChildAgent)
+      ) {
+        throw new Error('Child AgentRun resume capability is unavailable in this runtime context');
       }
 
       const startedAt = now();
       traceAgentSwarm(ctx, 'tool_started', 'batch_started', {
         itemCount: prepared.items.length,
+        resumedItemCount: prepared.items.filter((item) => item.mode === 'resume').length,
         maxConcurrency: prepared.maxConcurrency,
       });
       for (
@@ -94,6 +135,8 @@ export function buildAgentSwarmTool(
           itemId: item.itemId,
           index: item.index,
           profile: item.profile,
+          mode: item.mode,
+          ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
           boundary: 'local_swarm_concurrency',
         });
       }
@@ -110,6 +153,8 @@ export function buildAgentSwarmTool(
             itemId: item.itemId,
             index: item.index,
             profile: item.profile,
+            mode: item.mode,
+            ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
             boundary: 'local_swarm_concurrency',
           });
           ctx.emitOutput(
@@ -117,17 +162,24 @@ export function buildAgentSwarmTool(
             `Agent swarm item ${item.itemId} started: ${item.definition.name}\n`,
           );
           try {
-            const result = (await ctx.spawnChildAgent!({
-              spec: {
-                id: item.definition.id,
-                name: item.definition.name,
-                systemPrompt: item.definition.systemPrompt,
-              },
-              prompt: item.task,
-              onReady: ({ turnId, agentId, agentName }) => {
-                readyRefs[index] = { turnId, agentId, agentName };
-              },
-            })) as SpawnChildAgentResult;
+            const onReady = ({ turnId, agentId, agentName }: StartedChildRef) => {
+              readyRefs[index] = { turnId, agentId, agentName };
+            };
+            const result = (await (item.mode === 'resume'
+              ? ctx.resumeChildAgent!({
+                  sourceRunId: item.resumedFromRunId!,
+                  prompt: item.task,
+                  onReady,
+                })
+              : ctx.spawnChildAgent!({
+                  spec: {
+                    id: item.definition.id,
+                    name: item.definition.name,
+                    systemPrompt: item.definition.systemPrompt,
+                  },
+                  prompt: item.task,
+                  onReady,
+                }))) as SpawnChildAgentResult;
             childResults[index] = result;
             traceAgentSwarm(
               ctx,
@@ -137,6 +189,8 @@ export function buildAgentSwarmTool(
                 itemId: item.itemId,
                 index: item.index,
                 profile: item.profile,
+                mode: item.mode,
+                ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
                 status: result.status,
                 turnId: result.turnId,
                 ...(result.runId ? { runId: result.runId } : {}),
@@ -154,6 +208,8 @@ export function buildAgentSwarmTool(
               itemId: item.itemId,
               index: item.index,
               profile: item.profile,
+              mode: item.mode,
+              ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
               status: ctx.abortSignal.aborted ? 'cancelled' : 'failed',
               failureClass: boundedFailureClass(error, 'ChildAgentError'),
             });
@@ -186,6 +242,7 @@ export function buildAgentSwarmTool(
       };
       traceAgentSwarm(ctx, 'tool_completed', 'batch_completed', {
         ...projectAgentSwarmResult(result),
+        resumedItemCount: prepared.items.filter((item) => item.mode === 'resume').length,
       });
       return result;
     },
@@ -232,39 +289,156 @@ function agentSwarmInputSchema() {
       addAgentContractIssues(input, ctx);
     });
 
-  return z.object({
-    items: z
-      .array(itemSchema)
-      .min(1)
-      .max(AGENT_SWARM_MAX_ITEMS)
-      .superRefine((items, ctx) => {
-        const seen = new Set<string>();
-        for (let index = 0; index < items.length; index += 1) {
-          const itemId = items[index]!.item_id;
-          if (seen.has(itemId)) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: [index, 'item_id'],
-              message: `Duplicate agent swarm item_id "${itemId}".`,
-            });
-          }
-          seen.add(itemId);
+  const explicitItemsSchema = z
+    .array(itemSchema)
+    .min(1)
+    .max(AGENT_SWARM_MAX_ITEMS)
+    .superRefine((items, ctx) => {
+      const seen = new Set<string>();
+      for (let index = 0; index < items.length; index += 1) {
+        const itemId = items[index]!.item_id;
+        if (seen.has(itemId)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, 'item_id'],
+            message: `Duplicate agent swarm item_id "${itemId}".`,
+          });
         }
-      }),
-    max_concurrency: z
-      .number()
-      .int()
-      .min(1)
-      .max(AGENT_SWARM_MAX_CONCURRENCY)
-      .default(AGENT_SWARM_DEFAULT_CONCURRENCY)
-      .describe('Maximum number of child items active inside this batch.'),
-  });
+        seen.add(itemId);
+      }
+    });
+  const templateItemsSchema = z.array(z.string().trim().min(1)).min(1).max(AGENT_SWARM_MAX_ITEMS);
+
+  return z
+    .object({
+      items: z.union([explicitItemsSchema, templateItemsSchema]).optional(),
+      prompt_template: z
+        .string()
+        .trim()
+        .min(1)
+        .max(AGENT_SWARM_TASK_MAX_CHARS)
+        .optional()
+        .describe(
+          `Shared task template for string items; every ${AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER} occurrence is replaced.`,
+        ),
+      profile: z
+        .enum(BUILTIN_AGENT_PROFILES)
+        .optional()
+        .describe('Shared child profile for prompt_template string items.'),
+      resume_run_ids: z
+        .record(z.string().trim().min(1), z.string().trim().min(1).max(AGENT_SWARM_TASK_MAX_CHARS))
+        .optional()
+        .describe('Map of terminal child AgentRun runId to its continuation prompt.'),
+      max_concurrency: z
+        .number()
+        .int()
+        .min(1)
+        .max(AGENT_SWARM_MAX_CONCURRENCY)
+        .default(AGENT_SWARM_DEFAULT_CONCURRENCY)
+        .describe('Maximum number of child items active inside this batch.'),
+    })
+    .superRefine((input, ctx) => {
+      const resumeCount = Object.keys(input.resume_run_ids ?? {}).length;
+      const itemCount = input.items?.length ?? 0;
+      if (resumeCount + itemCount < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Agent swarm requires at least one item or resume_run_ids entry.',
+        });
+      }
+      if (resumeCount + itemCount > AGENT_SWARM_MAX_ITEMS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Agent swarm supports at most ${AGENT_SWARM_MAX_ITEMS} total items.`,
+        });
+      }
+
+      if (!input.items) {
+        if (input.prompt_template !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['prompt_template'],
+            message: 'prompt_template requires string items.',
+          });
+        }
+        if (input.profile !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['profile'],
+            message: 'profile requires string items.',
+          });
+        }
+        return;
+      }
+
+      const templateItems = input.items.every((item) => typeof item === 'string');
+      if (!templateItems) {
+        if (input.prompt_template !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['prompt_template'],
+            message: 'prompt_template is only valid when items are strings.',
+          });
+        }
+        if (input.profile !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['profile'],
+            message: 'profile is specified per item when items are structured.',
+          });
+        }
+        return;
+      }
+
+      if (input.prompt_template === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['prompt_template'],
+          message: 'prompt_template is required when items are strings.',
+        });
+        return;
+      }
+      if (input.profile === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['profile'],
+          message: 'profile is required when items are strings.',
+        });
+      }
+      if (!input.prompt_template.includes(AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['prompt_template'],
+          message: `prompt_template must include ${AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER}.`,
+        });
+        return;
+      }
+
+      const seenTasks = new Set<string>();
+      for (let index = 0; index < input.items.length; index += 1) {
+        const item = input.items[index];
+        if (typeof item !== 'string') continue;
+        const task = expandAgentSwarmPromptTemplate(input.prompt_template, item);
+        if (task.length > AGENT_SWARM_TASK_MAX_CHARS) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['items', index],
+            message: `Expanded agent swarm task exceeds ${AGENT_SWARM_TASK_MAX_CHARS} characters.`,
+          });
+        }
+        if (seenTasks.has(task)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['items', index],
+            message: 'Template items must produce distinct agent swarm tasks.',
+          });
+        }
+        seenTasks.add(task);
+      }
+    });
 }
 
-function addAgentContractIssues(
-  input: AgentSwarmToolInput['items'][number],
-  ctx: z.RefinementCtx,
-): void {
+function addAgentContractIssues(input: AgentSwarmExplicitItemInput, ctx: z.RefinementCtx): void {
   const definition = requireBuiltinAgentDefinitionByProfile(input.profile);
   const writeBack = input.write_back ?? definition.contract.defaultWriteBack;
   if (!definition.contract.supportedWriteBack.some((mode) => mode === writeBack)) {
@@ -284,15 +458,60 @@ function addAgentContractIssues(
   }
 }
 
-function preflightAgentSwarmInput(input: AgentSwarmToolInput): {
+async function prepareAgentSwarmInput(
+  input: AgentSwarmToolInput,
+  ctx: MakaToolContext,
+): Promise<{
   readonly items: readonly PreparedAgentSwarmItem[];
   readonly maxConcurrency: number;
-} {
-  if (!Array.isArray(input.items) || input.items.length < 1) {
-    throw new Error('Agent swarm requires at least one item.');
+}> {
+  const preflight = preflightAgentSwarmInput(input);
+  if (preflight.items.length > 0 && !ctx.spawnChildAgent) {
+    throw new Error('spawnChildAgent capability is unavailable in this runtime context');
   }
-  if (input.items.length > AGENT_SWARM_MAX_ITEMS) {
-    throw new Error(`Agent swarm supports at most ${AGENT_SWARM_MAX_ITEMS} items.`);
+  if (preflight.resumes.length > 0 && (!ctx.prepareChildAgentResume || !ctx.resumeChildAgent)) {
+    throw new Error('Child AgentRun resume capability is unavailable in this runtime context');
+  }
+  const resumes = await Promise.all(
+    preflight.resumes.map(async (item): Promise<PreparedAgentSwarmItem> => {
+      const prepared = await ctx.prepareChildAgentResume!(item.sourceRunId);
+      if (prepared.sourceRunId !== item.sourceRunId) {
+        throw new Error(`Child AgentRun resume identity changed for ${item.sourceRunId}`);
+      }
+      const definition = requireBuiltinAgentDefinitionByProfile(prepared.profile);
+      if (definition.id !== prepared.agentId || definition.name !== prepared.agentName) {
+        throw new Error(`Child AgentRun resume profile changed for ${item.sourceRunId}`);
+      }
+      return {
+        index: item.index,
+        itemId: item.itemId,
+        profile: definition.profile,
+        task: item.task,
+        definition,
+        mode: 'resume',
+        resumedFromRunId: item.sourceRunId,
+      };
+    }),
+  );
+  return {
+    items: [...resumes, ...preflight.items],
+    maxConcurrency: preflight.maxConcurrency,
+  };
+}
+
+function preflightAgentSwarmInput(input: AgentSwarmToolInput): {
+  readonly items: readonly PreparedAgentSwarmItem[];
+  readonly resumes: readonly PendingAgentSwarmResume[];
+  readonly maxConcurrency: number;
+} {
+  const resumeEntries = Object.entries(input.resume_run_ids ?? {});
+  const explicitItems = normalizeAgentSwarmItems(input);
+  const totalItems = resumeEntries.length + explicitItems.length;
+  if (totalItems < 1) {
+    throw new Error('Agent swarm requires at least one item or resume_run_ids entry.');
+  }
+  if (totalItems > AGENT_SWARM_MAX_ITEMS) {
+    throw new Error(`Agent swarm supports at most ${AGENT_SWARM_MAX_ITEMS} total items.`);
   }
   const maxConcurrency = input.max_concurrency ?? AGENT_SWARM_DEFAULT_CONCURRENCY;
   if (
@@ -305,8 +524,26 @@ function preflightAgentSwarmInput(input: AgentSwarmToolInput): {
     );
   }
 
+  const resumes = resumeEntries.map(([sourceRunId, prompt], index): PendingAgentSwarmResume => {
+    if (sourceRunId.trim().length < 1) {
+      throw new Error(`Agent swarm resume entry ${index} has an invalid runId.`);
+    }
+    if (
+      typeof prompt !== 'string' ||
+      prompt.trim().length < 1 ||
+      prompt.trim().length > AGENT_SWARM_TASK_MAX_CHARS
+    ) {
+      throw new Error(`Agent swarm resume entry ${sourceRunId} has an invalid prompt.`);
+    }
+    return {
+      index,
+      itemId: `resume-${index + 1}`,
+      sourceRunId: sourceRunId.trim(),
+      task: prompt.trim(),
+    };
+  });
   const seen = new Set<string>();
-  const items = input.items.map((item, index): PreparedAgentSwarmItem => {
+  const items = explicitItems.map((item, index): PreparedAgentSwarmItem => {
     if (!isSafeTaskId(item.item_id)) {
       throw new Error(`Agent swarm item ${index} has an invalid item_id.`);
     }
@@ -342,14 +579,71 @@ function preflightAgentSwarmInput(input: AgentSwarmToolInput): {
     }
 
     return {
-      index,
+      index: resumes.length + index,
       itemId: item.item_id,
       profile: definition.profile,
       task: item.task,
       definition,
+      mode: 'spawn',
     };
   });
-  return { items, maxConcurrency };
+  return { items, resumes, maxConcurrency };
+}
+
+function normalizeAgentSwarmItems(input: AgentSwarmToolInput): AgentSwarmExplicitItemInput[] {
+  if (!('items' in input) || !input.items) {
+    if ('prompt_template' in input || 'profile' in input) {
+      throw new Error('prompt_template and shared profile require string items.');
+    }
+    return [];
+  }
+  const stringItemCount = input.items.filter((item) => typeof item === 'string').length;
+  if (stringItemCount === 0) {
+    if ('prompt_template' in input || 'profile' in input) {
+      throw new Error('prompt_template and shared profile are only valid when items are strings.');
+    }
+    return input.items;
+  }
+  if (stringItemCount !== input.items.length) {
+    throw new Error('Agent swarm items must be either all structured items or all strings.');
+  }
+  if (!('prompt_template' in input) || typeof input.prompt_template !== 'string') {
+    throw new Error('prompt_template is required when agent swarm items are strings.');
+  }
+  if (!('profile' in input) || typeof input.profile !== 'string') {
+    throw new Error('profile is required when agent swarm items are strings.');
+  }
+
+  const promptTemplate = input.prompt_template.trim();
+  if (!promptTemplate.includes(AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER)) {
+    throw new Error(`prompt_template must include ${AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER}.`);
+  }
+  const seenTasks = new Set<string>();
+  return input.items.map((rawItem, index) => {
+    const item = rawItem.trim();
+    if (item.length < 1) {
+      throw new Error(`Agent swarm template item ${index} must not be empty.`);
+    }
+    const task = expandAgentSwarmPromptTemplate(promptTemplate, item);
+    if (task.length > AGENT_SWARM_TASK_MAX_CHARS) {
+      throw new Error(
+        `Expanded agent swarm task ${index} exceeds ${AGENT_SWARM_TASK_MAX_CHARS} characters.`,
+      );
+    }
+    if (seenTasks.has(task)) {
+      throw new Error(`Agent swarm template item ${index} produces a duplicate task.`);
+    }
+    seenTasks.add(task);
+    return {
+      item_id: `item-${index + 1}`,
+      profile: input.profile,
+      task,
+    };
+  });
+}
+
+function expandAgentSwarmPromptTemplate(promptTemplate: string, item: string): string {
+  return promptTemplate.split(AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER).join(item);
 }
 
 function mapAgentSwarmItem(
@@ -375,6 +669,7 @@ function mapAgentSwarmItem(
       index: row.index,
       profile: item.profile,
       started: ready !== undefined,
+      ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
       ...(ready ?? {}),
       status: 'failed',
       summary: boundedSwarmError(row.reason),
@@ -390,6 +685,7 @@ function mapAgentSwarmItem(
     index: row.index,
     profile: item.profile,
     started: ready !== undefined,
+    ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
     ...(ready ?? {}),
     status: 'cancelled',
     summary: ready
@@ -414,6 +710,7 @@ function mapChildResult(
     agentName: result.agentName,
     turnId: result.turnId,
     ...(result.runId ? { runId: result.runId } : {}),
+    ...(item.resumedFromRunId ? { resumedFromRunId: item.resumedFromRunId } : {}),
     status,
     summary: result.summary,
     artifactIds: result.artifactIds,

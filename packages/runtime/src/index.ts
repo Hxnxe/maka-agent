@@ -22,6 +22,8 @@ export type {
   StrictRecoveryStores,
   BackendFactory,
   BackendFactoryContext,
+  PrepareChildAgentResumeResult,
+  ResumeChildAgentInput,
   SpawnChildAgentInput,
   SpawnChildAgentResult,
   AgentListItem,
@@ -33,6 +35,7 @@ export type {
 
 export { PermissionEngine, createDefaultPermissionEngineDeps } from './permission-engine.js';
 export type { EvaluateResult, EvaluateInput, PermissionEngineDeps } from './permission-engine.js';
+export { renderSwarmModePrompt } from './swarm-mode.js';
 
 export {
   MAX_ADDITIONAL_PERMISSION_JUSTIFICATION_CHARS,
@@ -484,10 +487,15 @@ export {
   AGENT_SWARM_DEFAULT_CONCURRENCY,
   AGENT_SWARM_MAX_CONCURRENCY,
   AGENT_SWARM_MAX_ITEMS,
+  AGENT_SWARM_PROMPT_TEMPLATE_PLACEHOLDER,
   AGENT_SWARM_TOOL_NAME,
   buildAgentSwarmTool,
 } from './agent-swarm-tools.js';
 export type {
+  AgentSwarmExplicitItemInput,
+  AgentSwarmExplicitToolInput,
+  AgentSwarmResumeToolInput,
+  AgentSwarmTemplateToolInput,
   AgentSwarmToolInput,
   AgentSwarmToolResult,
 } from './agent-swarm-tools.js';

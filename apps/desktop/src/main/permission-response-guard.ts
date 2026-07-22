@@ -3,8 +3,10 @@ import type {
   PermissionResponse,
   RegenerateTurnInput,
   ReviseBeforeTurnInput,
+  TurnOrchestration,
   UserQuestionResponse,
 } from '@maka/core';
+import { isOrchestrationMode, isTurnOrchestrationSource } from '@maka/core';
 
 const MAX_PERMISSION_REQUEST_ID_LENGTH = 128;
 const MAX_TURN_ID_LENGTH = 128;
@@ -16,6 +18,7 @@ interface NormalizedSendSessionCommand {
   turnId?: string;
   text: string;
   attachmentItems?: unknown;
+  turnOrchestration?: TurnOrchestration;
 }
 type NormalizedStopSessionInput = { source?: 'stop_button' };
 
@@ -105,7 +108,18 @@ export function normalizeSessionSendCommand(input: unknown): NormalizedSendSessi
     ...normalizeOptionalSendTurnId(value.turnId),
     text: normalizeRequiredString(value.text, 'Invalid send text', MAX_SESSION_SEND_TEXT_LENGTH),
     ...(value.attachmentItems !== undefined ? { attachmentItems: value.attachmentItems } : {}),
+    ...(value.turnOrchestration !== undefined
+      ? { turnOrchestration: normalizeTurnOrchestration(value.turnOrchestration) }
+      : {}),
   };
+}
+
+function normalizeTurnOrchestration(input: unknown): TurnOrchestration {
+  const value = requireObject(input, 'Invalid turn orchestration');
+  if (!isOrchestrationMode(value.mode) || !isTurnOrchestrationSource(value.source)) {
+    throw new Error('Invalid turn orchestration');
+  }
+  return { mode: value.mode, source: value.source };
 }
 
 export function normalizeStopSessionInput(input: unknown): NormalizedStopSessionInput {

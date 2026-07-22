@@ -38,6 +38,11 @@ describe('session revision (edit-and-resend) contract', () => {
       /revisionNotice=\{[\s\S]*revisionDraft && activeId === revisionDraft\.draftSessionId/,
     );
     assert.match(shell, /composerRef\.current\?\.clearDraft\(expectedRevisionSessionId\)/);
+    assert.match(
+      shell,
+      /if \(text\.trim\(\) === '\/compact' \|\| swarmCommand\) \{[\s\S]*revisionCommandUnsupported/,
+      'revision drafts must reject local slash commands before preparing a durable version',
+    );
     assert.match(shell, /cancelRevisionDraft/);
     assert.match(
       shell,

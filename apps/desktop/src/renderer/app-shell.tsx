@@ -15,6 +15,7 @@ import {
   buildDeepResearchImplementationPrompt,
   collapseSessionRevisions,
   hasSettledInitialOnboarding,
+  parseSwarmCommand,
   resolveUiLocale,
 } from '@maka/core';
 import {
@@ -221,6 +222,8 @@ function AppShellContent({
   } = useAppShellComposerAttachments({ draftKey: attachmentDraftKey, toastApi });
   const [newChatPlanModeActive, setNewChatPlanModeActive] = useState(false);
   const [pendingCollaborationModeBySession, setPendingCollaborationModeBySession] = useState<Record<string, boolean>>({});
+  const [newChatSwarmModeActive, setNewChatSwarmModeActive] = useState(false);
+  const [pendingOrchestrationModeBySession, setPendingOrchestrationModeBySession] = useState<Record<string, boolean>>({});
   // P3: session ids with a live embedded-browser view. The right-side
   // BrowserPanel mounts only for these, so ordinary chats reserve no space.
   const [liveBrowserSessionIds, setLiveBrowserSessionIds] = useState<string[]>([]);
@@ -454,6 +457,7 @@ function AppShellContent({
   const sessionRowActionRegistry = useKeyedPendingRegistry();
   const permissionModeChangeRegistry = useKeyedPendingRegistry();
   const collaborationModeChangeRegistry = useKeyedPendingRegistry();
+  const orchestrationModeChangeRegistry = useKeyedPendingRegistry();
   const sessionModelChangeRegistry = useKeyedPendingRegistry();
   const pendingKeyOf = (sessionId: string, turnId: string, actionId: string) =>
     `${sessionId}:${turnId}:${actionId}`;
@@ -491,6 +495,8 @@ function AppShellContent({
     permissionModeChangeRegistry.keysRef.current.delete(sessionId);
     collaborationModeChangeRegistry.keysRef.current.delete(sessionId);
     setPendingCollaborationModeBySession((current) => omitSessionKey(current, sessionId));
+    orchestrationModeChangeRegistry.keysRef.current.delete(sessionId);
+    setPendingOrchestrationModeBySession((current) => omitSessionKey(current, sessionId));
     sessionModelChangeRegistry.keysRef.current.delete(sessionId);
   }
 
@@ -592,6 +598,43 @@ function AppShellContent({
         sessionId,
         collaborationModeChangeRegistry.keysRef,
         setPendingCollaborationModeBySession,
+      );
+    }
+  }
+
+  async function setSwarmMode(active: boolean): Promise<boolean> {
+    const sessionId = activeIdRef.current;
+    if (!sessionId) {
+      setNewChatSwarmModeActive(active);
+      return true;
+    }
+    if (!addPendingSessionAction(
+      sessionId,
+      orchestrationModeChangeRegistry.keysRef,
+      setPendingOrchestrationModeBySession,
+    )) return false;
+
+    try {
+      const next = await window.maka.sessions.setOrchestrationMode(
+        sessionId,
+        active ? 'swarm' : 'default',
+      );
+      setSessions((current) => current.map((session) => session.id === next.id ? next : session));
+      await refreshSessions();
+      return true;
+    } catch (error) {
+      if (activeIdRef.current === sessionId) {
+        toastApi.error(
+          shellCopy.swarmModeFailedTitle,
+          localizedShellErrorMessage(error, shellCopy.swarmModeFallback, uiLocale),
+        );
+      }
+      return false;
+    } finally {
+      clearPendingSessionAction(
+        sessionId,
+        orchestrationModeChangeRegistry.keysRef,
+        setPendingOrchestrationModeBySession,
       );
     }
   }
@@ -1002,6 +1045,7 @@ function AppShellContent({
     validPendingNewChatModel,
     pendingNewChatThinkingLevel: newChatThinkingLevel ?? null,
     newChatCollaborationMode: newChatPlanModeActive ? 'plan' : 'agent',
+    newChatOrchestrationMode: newChatSwarmModeActive ? 'swarm' : 'default',
   });
 
   const { handleTurnFooterAction } = useStableActions(createAppShellTurnActions, {
@@ -1043,6 +1087,7 @@ function AppShellContent({
     const revisionSend = Boolean(
       revision && activeIdRef.current === revision.draftSessionId,
     );
+    const swarmCommand = parseSwarmCommand(text);
     if (
       revisionSend &&
       revision &&
@@ -1059,7 +1104,7 @@ function AppShellContent({
         toastApi.info(actionCopy.revisionUnavailableTitle, actionCopy.revisionAttachmentsUnsupported);
         return false;
       }
-      if (text.trim() === '/compact') {
+      if (text.trim() === '/compact' || swarmCommand) {
         toastApi.info(actionCopy.revisionUnavailableTitle, actionCopy.revisionCommandUnsupported);
         return false;
       }
@@ -1083,6 +1128,36 @@ function AppShellContent({
         }
         return false;
       }
+    }
+    if (swarmCommand) {
+      if (swarmCommand.kind === 'status') {
+        const active = activeIdRef.current
+          ? (activeSessionForView?.orchestrationMode ?? 'default') === 'swarm'
+          : newChatSwarmModeActive;
+        toastApi.info(
+          active ? shellCopy.swarmModeEnabledTitle : shellCopy.swarmModeDisabledTitle,
+          shellCopy.swarmModeStatusDescription,
+        );
+        return true;
+      }
+      if (swarmCommand.kind === 'set_mode') {
+        const changed = await setSwarmMode(swarmCommand.mode === 'swarm');
+        if (changed) {
+          toastApi.info(
+            swarmCommand.mode === 'swarm'
+              ? shellCopy.swarmModeEnabledTitle
+              : shellCopy.swarmModeDisabledTitle,
+            shellCopy.swarmModeStatusDescription,
+          );
+        }
+        return changed;
+      }
+      const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
+      const ok = await send(swarmCommand.task, pending, {
+        turnOrchestration: { mode: 'swarm', source: 'slash_command' },
+      });
+      if (ok !== false && pending) clearSubmittedAttachments(pending);
+      return ok;
     }
     const pending = pendingAttachments.length > 0 ? pendingAttachments : undefined;
     const expectedRevisionSessionId = revisionSend
@@ -1823,6 +1898,24 @@ function AppShellContent({
                           : undefined
                 }
                 onPlanModeChange={setPlanMode}
+                swarmModeActive={activeId
+                  ? (activeSessionForView?.orchestrationMode ?? 'default') === 'swarm'
+                  : newChatSwarmModeActive}
+                swarmModePending={activeId ? pendingOrchestrationModeBySession[activeId] === true : false}
+                swarmModeDisabledReason={
+                  activeId && pendingOrchestrationModeBySession[activeId] === true
+                    ? shellCopy.swarmModeChanging
+                    : activeStreamingLive
+                        ? shellCopy.swarmModeStreaming
+                      : activeId && activeSessionForView?.status === 'running'
+                          ? shellCopy.swarmModeRunning
+                        : activeId && activeSessionForView?.status === 'waiting_for_user'
+                            ? shellCopy.swarmModeWaiting
+                          : undefined
+                }
+                onSwarmModeChange={(active) => {
+                  void setSwarmMode(active);
+                }}
               />
             </div>
             {navSelection.section === 'sessions' && activeId && !workbarCollapsed && (

@@ -1,9 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
-import {
-  collapseSessionRevisions,
-  revisionFamilySessionIds,
-} from '../session-revisions.js';
+import { collapseSessionRevisions, revisionFamilySessionIds } from '../session-revisions.js';
 import type { SessionSummary } from '../session.js';
 
 function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -53,7 +50,10 @@ describe('logical session revision projection', () => {
       revisionIndex: 2,
       revisionState: 'preparing',
     });
-    assert.deepEqual(collapseSessionRevisions([preparing, root]).map((session) => session.id), ['root']);
+    assert.deepEqual(
+      collapseSessionRevisions([preparing, root]).map((session) => session.id),
+      ['root'],
+    );
     assert.deepEqual(
       collapseSessionRevisions([preparing, root], 'preparing').map((session) => session.id),
       ['preparing'],

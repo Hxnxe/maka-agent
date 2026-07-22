@@ -5,8 +5,9 @@ import { ipcMain } from 'electron';
 import {
   DEFAULT_SESSION_NAME,
   isCollaborationMode,
-  revisionFamilySessionIds,
+  isOrchestrationMode,
   isPermissionMode,
+  revisionFamilySessionIds,
   isThinkingLevel,
   sanitizeTaskLedgerTask,
   thinkingVariantsForModel,
@@ -208,6 +209,10 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
     if (!isCollaborationMode(collaborationMode)) {
       throw new TypeError('Invalid collaboration mode.');
     }
+    const orchestrationMode = input?.orchestrationMode ?? 'default';
+    if (!isOrchestrationMode(orchestrationMode)) {
+      throw new TypeError('Invalid orchestration mode.');
+    }
     if (input?.backend === 'fake') {
       if (!canCreateFakeSession()) {
         throw new Error('FakeBackend sessions are only available in development.');
@@ -219,6 +224,7 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
         model: input.model ?? 'fake-model',
         permissionMode: input.permissionMode ?? (await resolveDefaultPermissionMode(() => settingsStore.get())),
         collaborationMode,
+        orchestrationMode,
         name: input.name ?? DEFAULT_SESSION_NAME,
         labels: input.labels,
       });
@@ -238,6 +244,7 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       permissionMode: input?.permissionMode ?? (await resolveDefaultPermissionMode(() => settingsStore.get())),
       collaborationMode,
+      orchestrationMode,
       name: input?.name ?? DEFAULT_SESSION_NAME,
       labels: input?.labels,
     });
@@ -335,6 +342,9 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       {
         turnId,
         text: sendCommand.text,
+        ...(sendCommand.turnOrchestration
+          ? { turnOrchestration: sendCommand.turnOrchestration }
+          : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
       },
       {
@@ -485,6 +495,15 @@ export function registerSessionsIpc(deps: SessionsIpcDeps): void {
       throw new Error(`Invalid collaboration mode: ${String(mode)}`);
     }
     return runtime.setCollaborationMode(sessionId, mode).then((session) => {
+      emitSessionsChanged('mode-change', sessionId);
+      return session;
+    });
+  });
+  ipcMain.handle('sessions:setOrchestrationMode', (_event, sessionId: string, mode: unknown) => {
+    if (!isOrchestrationMode(mode)) {
+      throw new Error(`Invalid orchestration mode: ${String(mode)}`);
+    }
+    return runtime.setOrchestrationMode(sessionId, mode).then((session) => {
       emitSessionsChanged('mode-change', sessionId);
       return session;
     });
